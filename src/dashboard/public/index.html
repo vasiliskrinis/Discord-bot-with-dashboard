@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bot Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div id="loginView" class="login-view is-hidden">
+      <form id="loginForm" class="login-panel">
+        <div class="login-mark">BD</div>
+        <h1>Bot Dashboard</h1>
+        <label for="passwordInput">Password</label>
+        <input id="passwordInput" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+        <p id="loginMessage" class="message"></p>
+      </form>
+    </div>
+
+    <div id="appView" class="app-shell is-hidden">
+      <aside class="sidebar">
+        <div class="brand">
+          <div id="botAvatar" class="avatar">BD</div>
+          <div class="brand-copy">
+            <strong id="botTag">Discord Bot</strong>
+            <span id="botMeta">Starting</span>
+          </div>
+        </div>
+
+        <div class="search-box">
+          <label for="guildSearch">Servers</label>
+          <input id="guildSearch" type="search" placeholder="Filter servers">
+        </div>
+
+        <nav id="guildList" class="guild-list" aria-label="Servers"></nav>
+
+        <button id="logoutButton" class="secondary-button" type="button">Sign out</button>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>Bot Dashboard</h1>
+            <p id="summaryLine">Loading bot state</p>
+          </div>
+          <div class="toolbar">
+            <button id="refreshButton" class="secondary-button" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <div class="tabs" role="tablist" aria-label="Dashboard views">
+          <button class="tab is-active" type="button" data-view="overview">Overview</button>
+          <button class="tab" type="button" data-view="server">Server</button>
+          <button class="tab" type="button" data-view="data">Data</button>
+        </div>
+
+        <section id="overviewView" class="view">
+          <div id="statGrid" class="stat-grid"></div>
+
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Runtime</h2>
+                <span id="runtimeStamp" class="muted"></span>
+              </div>
+              <div id="runtimeControls" class="switch-grid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Presence</h2>
+              </div>
+              <form id="presenceForm" class="presence-form">
+                <label>
+                  Status
+                  <select id="statusSelect">
+                    <option value="online">Online</option>
+                    <option value="idle">Idle</option>
+                    <option value="dnd">Do not disturb</option>
+                    <option value="invisible">Invisible</option>
+                  </select>
+                </label>
+                <label>
+                  Activity
+                  <select id="activityTypeSelect">
+                    <option value="playing">Playing</option>
+                    <option value="watching">Watching</option>
+                    <option value="listening">Listening</option>
+                    <option value="competing">Competing</option>
+                  </select>
+                </label>
+                <label class="wide">
+                  Text
+                  <input id="activityTextInput" type="text" maxlength="128" placeholder="server logs">
+                </label>
+                <button type="submit">Apply</button>
+              </form>
+            </section>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Command Usage</h2>
+              </div>
+              <div id="commandUsage" class="data-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Watchlist</h2>
+              </div>
+              <div id="botBans" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="serverView" class="view is-hidden">
+          <div id="serverHeader" class="server-header"></div>
+
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Settings</h2>
+              </div>
+              <form id="configForm" class="config-form">
+                <label>
+                  Key
+                  <select id="configKeySelect"></select>
+                </label>
+                <label class="wide">
+                  Value
+                  <textarea id="configValueInput" rows="3"></textarea>
+                </label>
+                <button type="submit">Save</button>
+              </form>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Setting</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="configTable"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Active Restrictions</h2>
+              </div>
+              <div id="restrictionList" class="data-list"></div>
+            </section>
+          </div>
+
+          <div class="content-grid three">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Recent Cases</h2>
+              </div>
+              <div id="caseList" class="data-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Tickets</h2>
+              </div>
+              <div id="ticketList" class="data-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Scheduled</h2>
+              </div>
+              <div id="scheduledList" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="dataView" class="view is-hidden">
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Database Tables</h2>
+                <span id="databasePath" class="muted"></span>
+              </div>
+              <div id="databaseTables" class="table-bars"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Servers</h2>
+              </div>
+              <div id="serverMatrix" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast is-hidden" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
