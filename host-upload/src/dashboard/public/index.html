@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=3">
   </head>
   <body>
     <div id="loginView" class="login-view is-hidden">
@@ -52,6 +52,7 @@
         <div class="tabs" role="tablist" aria-label="Dashboard views">
           <button class="tab is-active" type="button" data-view="overview">Overview</button>
           <button class="tab" type="button" data-view="server">Server</button>
+          <button class="tab" type="button" data-view="owner">Owner</button>
           <button class="tab" type="button" data-view="data">Data</button>
         </div>
 
@@ -120,6 +121,7 @@
 
         <section id="serverView" class="view is-hidden">
           <div id="serverHeader" class="server-header"></div>
+          <div id="serverActionBar" class="action-bar"></div>
 
           <div class="content-grid">
             <section class="panel">
@@ -131,6 +133,7 @@
                   Key
                   <select id="configKeySelect"></select>
                 </label>
+                <button id="configPickerButton" class="secondary-button" type="button">Pick</button>
                 <label class="wide">
                   Value
                   <textarea id="configValueInput" rows="3"></textarea>
@@ -182,6 +185,77 @@
           </div>
         </section>
 
+        <section id="ownerView" class="view is-hidden">
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Broadcast</h2>
+                <span id="broadcastResult" class="muted"></span>
+              </div>
+              <form id="broadcastForm" class="control-form">
+                <label>
+                  Target
+                  <select id="broadcastTarget"></select>
+                </label>
+                <label class="wide">
+                  Message
+                  <textarea id="broadcastMessage" rows="5" maxlength="3900"></textarea>
+                </label>
+                <button type="submit">Send Broadcast</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Blacklist</h2>
+              </div>
+              <form id="blacklistForm" class="control-form">
+                <label>
+                  Action
+                  <select id="blacklistAction">
+                    <option value="add">Add</option>
+                    <option value="remove">Remove</option>
+                  </select>
+                </label>
+                <label>
+                  Type
+                  <select id="blacklistKind">
+                    <option value="member">User</option>
+                    <option value="guild">Server</option>
+                  </select>
+                </label>
+                <label class="wide">
+                  ID
+                  <input id="blacklistId" type="text" inputmode="numeric">
+                </label>
+                <label class="wide">
+                  Reason
+                  <input id="blacklistReason" type="text" maxlength="240">
+                </label>
+                <button type="submit">Apply</button>
+              </form>
+            </section>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Database</h2>
+                <span id="backupResult" class="muted"></span>
+              </div>
+              <button id="backupButton" class="primary-button" type="button">Create Backup</button>
+              <div id="ownerHealth" class="mini-grid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Servers</h2>
+              </div>
+              <div id="ownerServerList" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+
         <section id="dataView" class="view is-hidden">
           <div class="content-grid">
             <section class="panel">
@@ -204,6 +278,21 @@
     </div>
 
     <div id="toast" class="toast is-hidden" role="status" aria-live="polite"></div>
-    <script src="app.js"></script>
+    <div id="pickerOverlay" class="modal-overlay is-hidden" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+      <section class="modal-panel">
+        <div class="modal-head">
+          <h2 id="pickerTitle">Select</h2>
+          <button id="pickerCloseButton" class="icon-button" type="button" aria-label="Close">x</button>
+        </div>
+        <input id="pickerSearch" class="modal-search" type="search" placeholder="Search">
+        <div id="pickerList" class="picker-list"></div>
+        <div class="modal-actions">
+          <button id="pickerClearButton" class="secondary-button" type="button">Clear</button>
+          <button id="pickerCancelButton" class="secondary-button" type="button">Cancel</button>
+          <button id="pickerApplyButton" class="primary-button" type="button">Apply</button>
+        </div>
+      </section>
+    </div>
+    <script src="app.js?v=3"></script>
   </body>
 </html>

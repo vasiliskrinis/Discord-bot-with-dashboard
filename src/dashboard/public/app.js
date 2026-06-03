@@ -6,6 +6,7 @@ const state = {
   selectedGuildId: null,
   guildDetail: null,
   view: 'overview',
+  picker: null,
   refreshTimer: null,
   toastTimer: null
 };
@@ -47,17 +48,40 @@ function bindElements() {
     commandUsage: document.getElementById('commandUsage'),
     botBans: document.getElementById('botBans'),
     serverHeader: document.getElementById('serverHeader'),
+    serverActionBar: document.getElementById('serverActionBar'),
     configForm: document.getElementById('configForm'),
     configKeySelect: document.getElementById('configKeySelect'),
     configValueInput: document.getElementById('configValueInput'),
+    configPickerButton: document.getElementById('configPickerButton'),
     configTable: document.getElementById('configTable'),
     restrictionList: document.getElementById('restrictionList'),
     caseList: document.getElementById('caseList'),
     ticketList: document.getElementById('ticketList'),
     scheduledList: document.getElementById('scheduledList'),
+    broadcastForm: document.getElementById('broadcastForm'),
+    broadcastTarget: document.getElementById('broadcastTarget'),
+    broadcastMessage: document.getElementById('broadcastMessage'),
+    broadcastResult: document.getElementById('broadcastResult'),
+    blacklistForm: document.getElementById('blacklistForm'),
+    blacklistAction: document.getElementById('blacklistAction'),
+    blacklistKind: document.getElementById('blacklistKind'),
+    blacklistId: document.getElementById('blacklistId'),
+    blacklistReason: document.getElementById('blacklistReason'),
+    backupButton: document.getElementById('backupButton'),
+    backupResult: document.getElementById('backupResult'),
+    ownerHealth: document.getElementById('ownerHealth'),
+    ownerServerList: document.getElementById('ownerServerList'),
     databasePath: document.getElementById('databasePath'),
     databaseTables: document.getElementById('databaseTables'),
     serverMatrix: document.getElementById('serverMatrix'),
+    pickerOverlay: document.getElementById('pickerOverlay'),
+    pickerTitle: document.getElementById('pickerTitle'),
+    pickerCloseButton: document.getElementById('pickerCloseButton'),
+    pickerSearch: document.getElementById('pickerSearch'),
+    pickerList: document.getElementById('pickerList'),
+    pickerClearButton: document.getElementById('pickerClearButton'),
+    pickerCancelButton: document.getElementById('pickerCancelButton'),
+    pickerApplyButton: document.getElementById('pickerApplyButton'),
     toast: document.getElementById('toast')
   });
 }
@@ -118,6 +142,7 @@ function bindEvents() {
   });
 
   els.configKeySelect.addEventListener('change', syncConfigEditor);
+  els.configPickerButton.addEventListener('click', openConfigPicker);
 
   els.configForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -133,6 +158,64 @@ function bindEvents() {
     await loadOverview(false);
     showToast('Setting saved.');
   });
+
+  els.broadcastForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const response = await request('/api/owner/broadcast', {
+      method: 'POST',
+      body: {
+        target: els.broadcastTarget.value,
+        message: els.broadcastMessage.value
+      }
+    });
+    els.broadcastResult.textContent = `${response.sent}/${response.total} sent`;
+    els.broadcastMessage.value = '';
+    showToast('Broadcast sent.');
+  });
+
+  els.blacklistForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const response = await request('/api/owner/blacklist', {
+      method: 'POST',
+      body: {
+        action: els.blacklistAction.value,
+        kind: els.blacklistKind.value,
+        id: els.blacklistId.value,
+        reason: els.blacklistReason.value
+      }
+    });
+    if (state.overview) state.overview.botBans = response.botBans;
+    renderBotBans(response.botBans);
+    els.blacklistId.value = '';
+    els.blacklistReason.value = '';
+    showToast('Blacklist updated.');
+    await loadOverview(false);
+  });
+
+  els.backupButton.addEventListener('click', async () => {
+    els.backupButton.disabled = true;
+    try {
+      const response = await request('/api/owner/backup', { method: 'POST' });
+      els.backupResult.textContent = response.filePath || 'Backup created';
+      if (response.database) renderDatabase(response.database);
+      showToast('Database backup created.');
+    } finally {
+      els.backupButton.disabled = false;
+    }
+  });
+
+  els.pickerCloseButton.addEventListener('click', closePicker);
+  els.pickerCancelButton.addEventListener('click', closePicker);
+  els.pickerOverlay.addEventListener('click', (event) => {
+    if (event.target === els.pickerOverlay) closePicker();
+  });
+  els.pickerSearch.addEventListener('input', renderPickerList);
+  els.pickerClearButton.addEventListener('click', () => {
+    if (!state.picker) return;
+    state.picker.selected.clear();
+    renderPickerList();
+  });
+  els.pickerApplyButton.addEventListener('click', applyPickerSelection);
 }
 
 async function init() {
@@ -190,6 +273,7 @@ function renderOverview(overview) {
   renderBotBans(overview.botBans);
   renderDatabase(overview.database);
   renderServerMatrix(overview.guilds);
+  renderOwnerControls(overview);
 
   els.summaryLine.textContent = `${formatNumber(overview.totals.guilds)} servers - ${formatNumber(overview.totals.members)} members - ${statusLabel(overview.bot.status)} - ${formatDuration(overview.bot.uptimeMs)} uptime`;
   els.runtimeStamp.textContent = formatDate(overview.generatedAt);
@@ -269,6 +353,12 @@ function renderRuntimeControls(runtime) {
 function renderPresenceForm(bot) {
   const status = ['online', 'idle', 'dnd', 'invisible'].includes(bot.status) ? bot.status : 'online';
   els.statusSelect.value = status;
+  if (bot.activityType && [...els.activityTypeSelect.options].some((option) => option.value === bot.activityType)) {
+    els.activityTypeSelect.value = bot.activityType;
+  }
+  if (bot.activityText !== undefined) {
+    els.activityTextInput.value = bot.activityText || '';
+  }
 }
 
 function renderGuildList() {
@@ -314,6 +404,7 @@ function renderGuildDetail(detail) {
   `;
 
   renderConfig(detail.config);
+  renderServerActions(guild);
   renderRestrictions(detail.activeRestrictions);
   renderCases(detail.recentCases);
   renderTickets(detail.ticketPanels, detail.tickets);
@@ -330,14 +421,27 @@ function renderConfig(config) {
   syncConfigEditor();
 
   els.configTable.innerHTML = config.map((row) => `
-    <tr>
+    <tr class="${row.critical && row.empty ? 'config-risk' : ''}">
       <td>
         <strong>${escapeHtml(row.label)}</strong><br>
-        <span class="muted">${escapeHtml(row.key)}</span>
+        <span class="muted">${escapeHtml(row.key)} - ${escapeHtml(typeLabel(row.type))}</span>
       </td>
-      <td>${escapeHtml(row.display)}</td>
+      <td>
+        <div class="config-cell">
+          <span>${escapeHtml(row.display)}</span>
+          ${row.picker ? `<button class="secondary-button compact" type="button" data-config-pick="${escapeAttribute(row.key)}">Pick</button>` : ''}
+        </div>
+      </td>
     </tr>
   `).join('');
+
+  els.configTable.querySelectorAll('[data-config-pick]').forEach((button) => {
+    button.addEventListener('click', () => {
+      els.configKeySelect.value = button.dataset.configPick;
+      syncConfigEditor();
+      openConfigPicker();
+    });
+  });
 }
 
 function syncConfigEditor() {
@@ -345,9 +449,26 @@ function syncConfigEditor() {
   const row = state.guildDetail.config.find((item) => item.key === els.configKeySelect.value);
   if (!row) {
     els.configValueInput.value = '';
+    els.configPickerButton.disabled = true;
     return;
   }
   els.configValueInput.value = configInputValue(row.value);
+  els.configPickerButton.disabled = !row.picker;
+  els.configPickerButton.textContent = row.picker ? 'Pick' : 'Manual';
+}
+
+function typeLabel(type) {
+  const labels = {
+    channel: 'channel',
+    role: 'role',
+    'role-list': 'roles',
+    'user-list': 'users',
+    style: 'style',
+    json: 'json',
+    message: 'message',
+    text: 'text'
+  };
+  return labels[type] || type || 'value';
 }
 
 function configInputValue(value) {
@@ -355,6 +476,173 @@ function configInputValue(value) {
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
   return String(value);
+}
+
+function renderServerActions(guild) {
+  els.serverActionBar.innerHTML = `
+    <div class="action-group">
+      <button class="secondary-button" type="button" data-guild-action="lockdown">Lockdown</button>
+      <button class="secondary-button" type="button" data-guild-action="unlockdown">Unlockdown</button>
+    </div>
+    <div class="danger-group">
+      <input id="leaveConfirmInput" type="text" placeholder="${escapeAttribute(guild.id)}">
+      <button id="leaveGuildButton" class="danger-button" type="button">Leave Server</button>
+    </div>
+  `;
+
+  els.serverActionBar.querySelectorAll('[data-guild-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const response = await request(`/api/guilds/${encodeURIComponent(guild.id)}/action`, {
+          method: 'POST',
+          body: { action: button.dataset.guildAction }
+        });
+        if (response.detail) {
+          state.guildDetail = response.detail;
+          renderGuildDetail(response.detail);
+        }
+        showToast(`${button.dataset.guildAction} updated ${response.updatedChannels || 0} channels.`);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+
+  const leaveButton = els.serverActionBar.querySelector('#leaveGuildButton');
+  const leaveInput = els.serverActionBar.querySelector('#leaveConfirmInput');
+  leaveButton.addEventListener('click', async () => {
+    leaveButton.disabled = true;
+    try {
+      const response = await request(`/api/guilds/${encodeURIComponent(guild.id)}/leave`, {
+        method: 'POST',
+        body: { confirm: leaveInput.value }
+      });
+      state.selectedGuildId = null;
+      state.guildDetail = null;
+      state.overview = response.overview;
+      renderOverview(response.overview);
+      setView('overview');
+      showToast(`Left ${response.left.name}.`);
+    } finally {
+      leaveButton.disabled = false;
+    }
+  });
+}
+
+function renderOwnerControls(overview) {
+  const previousTarget = els.broadcastTarget.value;
+  els.broadcastTarget.innerHTML = [
+    '<option value="all">All servers</option>',
+    ...overview.guilds.map((guild) => `<option value="${escapeAttribute(guild.id)}">${escapeHtml(guild.name)}</option>`)
+  ].join('');
+  if ([...els.broadcastTarget.options].some((option) => option.value === previousTarget)) {
+    els.broadcastTarget.value = previousTarget;
+  }
+
+  const owner = overview.owner || {};
+  const health = owner.health || {};
+  els.ownerHealth.innerHTML = [
+    ['Ready Servers', health.configuredServers ?? 0],
+    ['Needs Setup', health.needsSetup ?? 0],
+    ['Cases', health.cases ?? 0],
+    ['Tickets', health.tickets ?? 0]
+  ].map(([label, value]) => `
+    <div class="mini-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatNumber(value)}</strong>
+    </div>
+  `).join('');
+
+  els.ownerServerList.innerHTML = listHtml(overview.guilds, 'No servers connected.', (guild) => {
+    const stateText = guild.missingCritical.length ? `${guild.missingCritical.length} missing` : 'Ready';
+    return `
+      <div class="owner-server-row">
+        <div>
+          <strong>${escapeHtml(guild.name)}</strong>
+          <span>${formatNumber(guild.memberCount)} members - ${escapeHtml(stateText)}</span>
+        </div>
+        <button class="secondary-button compact" type="button" data-owner-open="${escapeAttribute(guild.id)}">Open</button>
+      </div>
+    `;
+  });
+
+  els.ownerServerList.querySelectorAll('[data-owner-open]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await loadGuild(button.dataset.ownerOpen);
+      setView('server');
+    });
+  });
+}
+
+function openConfigPicker() {
+  if (!state.guildDetail) return;
+  const row = state.guildDetail.config.find((item) => item.key === els.configKeySelect.value);
+  if (!row?.picker) return;
+  const options = state.guildDetail.options?.[row.picker] || [];
+  const selected = new Set(listConfigInputValues(row.value));
+  state.picker = { row, options, selected };
+  els.pickerTitle.textContent = row.label;
+  els.pickerSearch.value = '';
+  renderPickerList();
+  els.pickerOverlay.classList.remove('is-hidden');
+  els.pickerSearch.focus();
+}
+
+function closePicker() {
+  state.picker = null;
+  els.pickerOverlay.classList.add('is-hidden');
+}
+
+function renderPickerList() {
+  if (!state.picker) return;
+  const query = els.pickerSearch.value.trim().toLowerCase();
+  const filtered = state.picker.options.filter((item) => {
+    const haystack = `${item.label || ''} ${item.detail || ''} ${item.id || ''}`.toLowerCase();
+    return haystack.includes(query);
+  });
+
+  els.pickerList.innerHTML = filtered.map((item) => {
+    const selected = state.picker.selected.has(item.id) ? ' is-selected' : '';
+    const color = item.color ? `<span class="swatch" style="background:${escapeAttribute(item.color)}"></span>` : '<span class="swatch muted-swatch"></span>';
+    const avatar = item.avatarUrl ? `<img src="${escapeAttribute(item.avatarUrl)}" alt="">` : color;
+    return `
+      <button class="picker-option${selected}" type="button" data-picker-id="${escapeAttribute(item.id)}">
+        ${avatar}
+        <span>
+          <strong>${escapeHtml(item.label || item.id)}</strong>
+          <small>${escapeHtml(item.detail || item.id)}</small>
+        </span>
+      </button>
+    `;
+  }).join('') || '<div class="empty-state">No matches.</div>';
+
+  els.pickerList.querySelectorAll('[data-picker-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.pickerId;
+      if (state.picker.row.multiple) {
+        if (state.picker.selected.has(id)) state.picker.selected.delete(id);
+        else state.picker.selected.add(id);
+      } else {
+        state.picker.selected.clear();
+        state.picker.selected.add(id);
+      }
+      renderPickerList();
+    });
+  });
+}
+
+function applyPickerSelection() {
+  if (!state.picker) return;
+  const values = [...state.picker.selected];
+  els.configValueInput.value = state.picker.row.multiple ? values.join(', ') : (values[0] || '');
+  closePicker();
+}
+
+function listConfigInputValues(value) {
+  if (value === null || value === undefined || value === '') return [];
+  if (Array.isArray(value)) return value.map((item) => String(item));
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 function renderRestrictions(items) {

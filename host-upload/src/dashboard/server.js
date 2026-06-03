@@ -3,9 +3,10 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { URL } = require('node:url');
-const { ActivityType } = require('discord.js');
+const { ActivityType, ChannelType, PermissionsBitField } = require('discord.js');
 const env = require('../env');
 const { DEFAULT_GUILD_CONFIG } = require('../db');
+const { EMBED_STYLES, buildEmbed } = require('../embeds');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -49,6 +50,7 @@ const ROLE_CONFIG_KEYS = new Set([
 
 const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'authorized_roles']);
 const USER_LIST_CONFIG_KEYS = new Set(['admin_users']);
+const EMBED_STYLE_KEYS = new Set(Object.keys(EMBED_STYLES));
 
 const CONFIG_LABELS = {
   restrict_perms_role: 'Restrict perms role',
@@ -185,6 +187,39 @@ async function handleRequest(context) {
       return;
     }
 
+    if (pathname === '/api/owner/broadcast' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, await sendOwnerBroadcast(client, db, body));
+      return;
+    }
+
+    if (pathname === '/api/owner/blacklist' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      sendJson(res, 200, updateBotBan(client, db, body));
+      return;
+    }
+
+    if (pathname === '/api/owner/backup' && req.method === 'POST') {
+      sendJson(res, 200, createDashboardBackup(db));
+      return;
+    }
+
+    const guildActionMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/action$/);
+    if (guildActionMatch && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const guildId = decodeURIComponent(guildActionMatch[1]);
+      sendJson(res, 200, await runGuildAction(client, db, guildId, body));
+      return;
+    }
+
+    const guildLeaveMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/leave$/);
+    if (guildLeaveMatch && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const guildId = decodeURIComponent(guildLeaveMatch[1]);
+      sendJson(res, 200, await leaveGuildFromDashboard(client, db, guildId, body));
+      return;
+    }
+
     const guildConfigMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/config$/);
     if (guildConfigMatch && req.method === 'POST') {
       const body = await readJsonBody(req);
@@ -233,6 +268,7 @@ function overviewPayload(client, db) {
       tables,
       totalRows: Object.values(tables).reduce((sum, count) => sum + count, 0)
     },
+    owner: safePayloadSection(errors, 'owner controls', {}, () => ownerPayload(db, guilds, tables)),
     commandUsage: safePayloadSection(errors, 'command usage', [], () => db.listCommandUsage(12)),
     botBans: safePayloadSection(errors, 'watchlist', [], () => db.listBotBans(null, 10)),
     errors
@@ -257,8 +293,13 @@ function guildDetailPayload(client, db, guildId) {
       value: config[key],
       display: displayConfigValue(client, guild, key, config[key]),
       empty: isEmptyConfigValue(config[key]),
-      editable: Object.prototype.hasOwnProperty.call(DEFAULT_GUILD_CONFIG, key)
+      editable: Object.prototype.hasOwnProperty.call(DEFAULT_GUILD_CONFIG, key),
+      type: configInputType(key),
+      picker: configPickerType(key),
+      multiple: ROLE_LIST_CONFIG_KEYS.has(key) || USER_LIST_CONFIG_KEYS.has(key),
+      critical: CRITICAL_CONFIG_KEYS.includes(key)
     })),
+    options: guildPickerOptions(client, guild),
     activeRestrictions: safePayloadSection(errors, 'active restrictions', [], () => db.listActiveRestrictions(guild.id, 20)).map((row) => ({
       userId: row.user_id,
       userLabel: userLabel(client, guild, row.user_id),
@@ -379,6 +420,242 @@ function defaultRuntimeFlags() {
   };
 }
 
+function ownerPayload(db, guilds, tables) {
+  return {
+    botOwnerId: env.botOwnerId || null,
+    locked: db.runtimeFlags(),
+    health: {
+      configuredServers: guilds.filter((guild) => guild.missingCritical?.length === 0).length,
+      needsSetup: guilds.filter((guild) => guild.missingCritical?.length > 0).length,
+      activeRestrictions: Number(tables.restrictions || 0),
+      cases: Number(tables.cases || 0),
+      tickets: Number(tables.tickets || 0)
+    }
+  };
+}
+
+function configInputType(key) {
+  if (CHANNEL_CONFIG_KEYS.has(key)) return 'channel';
+  if (ROLE_CONFIG_KEYS.has(key)) return 'role';
+  if (ROLE_LIST_CONFIG_KEYS.has(key)) return 'role-list';
+  if (USER_LIST_CONFIG_KEYS.has(key)) return 'user-list';
+  if (key === 'embed_style') return 'style';
+  if (key === 'sticky') return 'json';
+  if (key === 'welcome_message') return 'message';
+  return 'text';
+}
+
+function configPickerType(key) {
+  if (CHANNEL_CONFIG_KEYS.has(key)) return key === 'member_count_voice' ? 'voiceChannels' : 'textChannels';
+  if (ROLE_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key)) return 'roles';
+  if (USER_LIST_CONFIG_KEYS.has(key)) return 'users';
+  if (key === 'embed_style') return 'styles';
+  return null;
+}
+
+function guildPickerOptions(client, guild) {
+  return {
+    roles: [...(guild.roles?.cache?.values?.() || [])]
+      .filter((role) => role.id !== guild.id)
+      .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name))
+      .map((role) => ({
+        id: role.id,
+        label: role.name,
+        detail: `${role.members?.size || 0} members`,
+        color: role.hexColor && role.hexColor !== '#000000' ? role.hexColor : null,
+        managed: Boolean(role.managed)
+      })),
+    textChannels: channelOptions(guild, (channel) => channel?.isTextBased?.()),
+    voiceChannels: channelOptions(guild, (channel) => channel.type === ChannelType.GuildVoice),
+    users: [...(guild.members?.cache?.values?.() || [])]
+      .sort((a, b) => memberLabel(a).localeCompare(memberLabel(b)))
+      .slice(0, 250)
+      .map((member) => ({
+        id: member.id,
+        label: memberLabel(member),
+        detail: member.user?.tag || member.id,
+        avatarUrl: member.user?.displayAvatarURL?.({ size: 64 }) || null
+      })),
+    styles: Object.entries(EMBED_STYLES).map(([id, style]) => ({
+      id,
+      label: style.name,
+      detail: id,
+      color: `#${style.color.toString(16).padStart(6, '0')}`
+    }))
+  };
+}
+
+function channelOptions(guild, predicate) {
+  return [...(guild.channels?.cache?.values?.() || [])]
+    .filter(predicate)
+    .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0) || a.name.localeCompare(b.name))
+    .map((channel) => ({
+      id: channel.id,
+      label: channel.name,
+      detail: channelTypeLabel(channel.type),
+      parentId: channel.parentId || null
+    }));
+}
+
+function channelTypeLabel(type) {
+  const labels = {
+    [ChannelType.GuildText]: 'Text',
+    [ChannelType.GuildVoice]: 'Voice',
+    [ChannelType.GuildAnnouncement]: 'Announcement',
+    [ChannelType.GuildForum]: 'Forum',
+    [ChannelType.GuildStageVoice]: 'Stage'
+  };
+  return labels[type] || 'Channel';
+}
+
+function memberLabel(member) {
+  return member?.displayName || member?.user?.tag || member?.id || 'Unknown user';
+}
+
+async function sendOwnerBroadcast(client, db, body) {
+  const target = String(body.target || '').trim();
+  const text = String(body.message || '').trim();
+  if (!target) throw httpError(400, 'Broadcast target is required.');
+  if (!text) throw httpError(400, 'Broadcast message is required.');
+  if (text.length > 3900) throw httpError(400, 'Broadcast message is too long.');
+
+  const guilds = target === 'all'
+    ? getGuilds(client)
+    : [getGuild(client, target)].filter(Boolean);
+  if (!guilds.length) throw httpError(404, 'No matching server found.');
+
+  let sent = 0;
+  const failures = [];
+  for (const guild of guilds) {
+    const channel = findBroadcastChannel(db, guild);
+    if (!channel) {
+      failures.push({ guildId: guild.id, guildName: guild.name, reason: 'No writable channel' });
+      continue;
+    }
+    await channel.send({
+      embeds: [buildEmbed(db, guild.id, { title: 'Broadcast', description: text, style: 'royal' })]
+    }).then(() => {
+      sent += 1;
+    }).catch((err) => {
+      failures.push({ guildId: guild.id, guildName: guild.name, reason: err.message || 'Send failed' });
+    });
+  }
+
+  return {
+    sent,
+    total: guilds.length,
+    failures,
+    commandUsage: db.listCommandUsage(12)
+  };
+}
+
+function findBroadcastChannel(db, guild) {
+  const configuredIds = [
+    db.getConfig(guild.id, 'advanced_logs_channel'),
+    db.getConfig(guild.id, 'welcome_channel'),
+    db.getConfig(guild.id, 'restrict_logs_channel')
+  ].filter(Boolean);
+
+  const candidates = [
+    guild.systemChannel,
+    ...configuredIds.map((id) => guild.channels?.cache?.get?.(id)),
+    ...(guild.channels?.cache?.values?.() || [])
+  ].filter(Boolean);
+
+  return candidates.find((channel) => {
+    if (!channel?.isTextBased?.()) return false;
+    const permissions = channel.permissionsFor?.(guild.members?.me);
+    return permissions?.has?.(PermissionsBitField.Flags.SendMessages);
+  }) || null;
+}
+
+function updateBotBan(client, db, body) {
+  const action = String(body.action || 'add').trim().toLowerCase();
+  const kindRaw = String(body.kind || '').trim().toLowerCase();
+  const kind = kindRaw.startsWith('guild') || kindRaw === 'server'
+    ? 'guild'
+    : kindRaw.startsWith('user') || kindRaw === 'member'
+      ? 'member'
+      : null;
+  const id = String(body.id || '').trim().replace(/[<@!>]/g, '');
+  const reason = String(body.reason || 'Updated from dashboard').trim();
+
+  if (!['add', 'remove'].includes(action)) throw httpError(400, 'Invalid blacklist action.');
+  if (!kind || !id) throw httpError(400, 'Blacklist kind and ID are required.');
+  if (kind === 'member' && action === 'add' && env.botOwnerId && id === env.botOwnerId) {
+    throw httpError(400, 'The protected bot owner can not be blacklisted.');
+  }
+
+  if (action === 'add') db.addBotBan(kind, id, reason || 'Updated from dashboard');
+  else db.removeBotBan(kind, id);
+
+  const guild = kind === 'guild' ? getGuild(client, id) : null;
+  if (action === 'add' && guild) guild.leave().catch(() => null);
+
+  return {
+    botBans: db.listBotBans(null, 25),
+    action,
+    kind,
+    id
+  };
+}
+
+function createDashboardBackup(db) {
+  const backupPath = db.backupTo(path.join('data', 'backups', `bot-${timestampName()}.sqlite`));
+  const stats = db.databaseStats();
+  return {
+    filePath: backupPath,
+    database: {
+      ...stats,
+      totalRows: Object.values(stats.tables).reduce((sum, count) => sum + count, 0)
+    }
+  };
+}
+
+async function runGuildAction(client, db, guildId, body) {
+  const guild = getGuild(client, guildId);
+  if (!guild) throw httpError(404, 'Guild not found.');
+  const action = String(body.action || '').trim().toLowerCase();
+
+  if (action === 'lockdown' || action === 'unlockdown') {
+    const deny = action === 'lockdown' ? false : null;
+    let count = 0;
+    for (const channel of guild.channels?.cache?.values?.() || []) {
+      if (channel.type !== ChannelType.GuildText) continue;
+      await channel.permissionOverwrites.edit(guild.id, { SendMessages: deny })
+        .then(() => { count += 1; })
+        .catch(() => null);
+    }
+    return {
+      action,
+      updatedChannels: count,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  throw httpError(400, 'Unknown server action.');
+}
+
+async function leaveGuildFromDashboard(client, db, guildId, body) {
+  const guild = getGuild(client, guildId);
+  if (!guild) throw httpError(404, 'Guild not found.');
+  const confirm = String(body.confirm || '').trim();
+  if (confirm !== guild.id) {
+    throw httpError(400, 'Type the exact server ID to confirm leaving.');
+  }
+
+  const left = { id: guild.id, name: guild.name };
+  await guild.leave();
+  return {
+    left,
+    overview: overviewPayload(client, db)
+  };
+}
+
+function timestampName() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
 function updateRuntimeFlag(client, db, body) {
   const flag = String(body.flag || '').trim();
   const enabled = Boolean(body.enabled);
@@ -444,6 +721,11 @@ function normalizeConfigValue(key, value) {
       .filter(Boolean);
   }
 
+  if (key === 'embed_style') {
+    const style = String(value || '').trim().toLowerCase();
+    return EMBED_STYLE_KEYS.has(style) ? style : DEFAULT_GUILD_CONFIG.embed_style;
+  }
+
   if (key === 'welcome_message') {
     return String(value || DEFAULT_GUILD_CONFIG.welcome_message).slice(0, 1000);
   }
@@ -464,15 +746,23 @@ function normalizeConfigValue(key, value) {
 
 function botSummary(client) {
   const user = client.user;
+  const activity = user?.presence?.activities?.[0] || null;
   return {
     id: user?.id || null,
     tag: user?.tag || 'Discord Bot',
     avatarUrl: user?.displayAvatarURL?.({ size: 128 }) || null,
     status: user?.presence?.status || 'unknown',
+    activityType: activity ? activityTypeName(activity.type) : null,
+    activityText: activity?.name || '',
     uptimeMs: Number(client.uptime || 0),
     readyAt: client.readyAt?.getTime?.() || null,
     ping: Number.isFinite(client.ws?.ping) ? client.ws.ping : null
   };
+}
+
+function activityTypeName(type) {
+  const match = Object.entries(ACTIVITY_TYPES).find(([, value]) => value === type);
+  return match?.[0] || 'playing';
 }
 
 function guildSummary(guild, db) {
@@ -644,7 +934,7 @@ function serveStatic(res, staticRoot, pathname, headOnly = false) {
   res.writeHead(200, {
     ...securityHeaders(),
     'Content-Type': contentType,
-    'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=300',
+    'Cache-Control': 'no-store',
     'Content-Length': body.length
   });
   if (!headOnly) res.end(body);
@@ -665,7 +955,7 @@ function sendJson(res, status, data, extraHeaders = {}) {
 
 function securityHeaders() {
   return {
-    'Content-Security-Policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'Content-Security-Policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://media.discordapp.net data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff'
   };
