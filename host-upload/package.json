@@ -1,0 +1,17 @@
+{
+  "name": "discord-custom-bot",
+  "version": "1.0.0",
+  "description": "Custom Discord moderation, restriction, tickets, AI, update watcher, booster, counting, games, and utility bot.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check src/commands.js && node --check src/db.js && node --check src/env.js && node --check src/embeds.js && node --check src/permissions.js && node --check src/time.js && node --check src/dashboard/server.js && node --check src/dashboard/public/app.js && node --check src/services/ai.js && node --check src/services/games.js && node --check src/services/logger.js && node --check src/services/prompts.js && node --check src/services/restrictions.js && node --check src/services/tickets.js && node --check src/services/watchers.js"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3"
+  }
+}
