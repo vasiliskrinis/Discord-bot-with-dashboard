@@ -1,8 +1,10 @@
 const {
+  AuditLogEvent,
   Client,
   Events,
   GatewayIntentBits,
-  Partials
+  Partials,
+  PermissionsBitField
 } = require('discord.js');
 const env = require('./env');
 const { BotDatabase } = require('./db');
@@ -10,9 +12,11 @@ const commands = require('./commands');
 const { buildEmbed, error, success, warning } = require('./embeds');
 const { isBotOwner, isGuildModerator } = require('./permissions');
 const ai = require('./services/ai');
+const prompts = require('./services/prompts');
+const progression = require('./services/progression');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
-const { advancedLog } = require('./services/logger');
+const { advancedLog, systemLog } = require('./services/logger');
 const watchers = require('./services/watchers');
 const { startDashboard } = require('./dashboard/server');
 
@@ -67,7 +71,10 @@ client.on(Events.GuildCreate, async (guild) => {
 });
 
 client.on(Events.GuildMemberAdd, async (member) => {
-  await restrictions.reapplyRestrictionOnJoin(db, member).catch(() => null);
+  if (await handleBotAddGuard(member).catch(() => false)) return;
+  const reRestricted = await restrictions.reapplyRestrictionOnJoin(db, member).catch(() => false);
+  if (!reRestricted) await handleAutoRole(member).catch(() => null);
+  await handleAntiRaid(member).catch(() => null);
   await sendWelcome(member).catch(() => null);
   await watchers.updateMemberCountChannel(db, member.guild).catch(() => null);
   await advancedLog(db, member.guild, {
@@ -130,13 +137,16 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     await handleAfk(message);
 
-    const moderation = runtimeFlags.aiLocked || runtimeFlags.botLocked
+    const aiModerationEnabled = env.aiModeration &&
+      configBool(message.guild.id, 'ai_moderation_enabled', true);
+    const moderation = runtimeFlags.aiLocked || runtimeFlags.botLocked || !aiModerationEnabled || ownerBypass
       ? { blocked: false }
       : ai.moderateText(message.content);
     if (moderation.blocked && !isGuildModerator(db, message.member)) {
       await message.delete().catch(() => null);
-      await advancedLog(db, message.guild, {
+      await systemLog(db, message.guild, 'ai', {
         title: 'AI Moderation',
+        actor: message.author,
         fields: [
           { name: 'Member', value: `${message.author} (${message.author.id})`, inline: true },
           { name: 'Channel', value: `${message.channel}`, inline: true },
@@ -154,6 +164,7 @@ client.on(Events.MessageCreate, async (message) => {
     const handledPrefix = await commands.handlePrefixMessage(message, db, client);
     if (handledPrefix) return;
 
+    await progression.awardMessageActivity(db, message).catch(() => null);
     await handleSticky(message);
 
     if (message.mentions.has(client.user)) {
@@ -353,7 +364,8 @@ async function handleAiMention(message) {
     return;
   }
 
-  const parsed = ai.parseAiModerationCommand(message, client.user.id);
+  const referenced = await referencedMember(message);
+  const parsed = ai.parseAiModerationCommand(message, client.user.id, { targetMember: referenced });
   if (parsed) {
     if (!isGuildModerator(db, message.member)) {
       await message.reply('You need moderator permissions for AI moderation commands.');
@@ -364,14 +376,164 @@ async function handleAiMention(message) {
       ? [`<@${parsed.target.id}>`, '1h', ...reasonArgs]
       : [`<@${parsed.target.id}>`, ...reasonArgs];
     await commands.handlePrefixCommand(message, db, client, parsed.command, args);
+    await systemLog(db, message.guild, 'ai', {
+      title: 'AI Moderation Command',
+      actor: message.author,
+      target: parsed.target.user,
+      fields: [
+        { name: 'Command', value: parsed.command, inline: true },
+        { name: 'Reason', value: parsed.reason || 'AI command request' }
+      ]
+    }).catch(() => null);
     return;
   }
 
   const prompt = ai.stripBotMention(message.content, client.user.id);
   if (!prompt) return;
   await message.channel.sendTyping().catch(() => null);
-  const answer = await ai.askAI(prompt);
+  const answer = await ai.askAI(prompt, {
+    promptStack: prompts.buildPromptStack(db, {
+      guild: message.guild,
+      channel: message.channel
+    })
+  });
   await message.reply(answer.slice(0, 2000)).catch(() => null);
+  await systemLog(db, message.guild, 'ai', {
+    title: 'AI Reply',
+    actor: message.author,
+    fields: [
+      { name: 'Channel', value: `${message.channel}`, inline: true },
+      { name: 'Prompt', value: prompt.slice(0, 1000) },
+      { name: 'Answer', value: answer.slice(0, 1000) }
+    ]
+  }).catch(() => null);
+}
+
+async function referencedMember(message) {
+  if (!message.reference?.messageId) return null;
+  const referencedMessage = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+  const userId = referencedMessage?.author?.id;
+  if (!userId || referencedMessage.author.bot) return null;
+  return message.guild.members.fetch(userId).catch(() => null);
+}
+
+function configBool(guildId, key, fallback = true) {
+  const value = db.getConfig(guildId, key, fallback);
+  if (typeof value === 'boolean') return value;
+  if (value === null || value === undefined || value === '') return fallback;
+  const lowered = String(value).toLowerCase();
+  if (['1', 'true', 'yes', 'on', 'enabled', 'enable'].includes(lowered)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled', 'disable'].includes(lowered)) return false;
+  return fallback;
+}
+
+function configInt(guildId, key, fallback, min, max) {
+  const parsed = Number.parseInt(db.getConfig(guildId, key, fallback), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+async function handleAutoRole(member) {
+  if (member.user.bot) return;
+  const roleId = db.getConfig(member.guild.id, 'auto_role');
+  if (!roleId) return;
+  const role = await member.guild.roles.fetch(roleId).catch(() => null);
+  if (!role || role.managed || role.id === member.guild.id || member.roles.cache.has(role.id)) return;
+  await member.roles.add(role, 'Configured auto role').catch(() => null);
+}
+
+async function handleAntiRaid(member) {
+  if (member.user.bot || isBotOwner(member.id)) return;
+  if (!configBool(member.guild.id, 'anti_raid_enabled', true)) return;
+
+  const limit = configInt(member.guild.id, 'anti_raid_join_limit', 6, 2, 50);
+  const windowSeconds = configInt(member.guild.id, 'anti_raid_window_seconds', 20, 5, 600);
+  const cutoff = Date.now() - windowSeconds * 1000;
+  const joins = db.getState(member.guild.id, 'anti_raid_join_window', [])
+    .filter((entry) => entry.at >= cutoff);
+  joins.push({ userId: member.id, at: Date.now() });
+  db.setState(member.guild.id, 'anti_raid_join_window', joins.slice(-100));
+
+  if (joins.length < limit) return;
+
+  const action = String(db.getConfig(member.guild.id, 'anti_raid_action', 'restrict')).toLowerCase();
+  let actionResult = 'Logged only';
+  if (action === 'kick' && member.kickable) {
+    await member.kick('Anti-raid join threshold reached');
+    actionResult = 'Kicked newest member';
+  } else if (action === 'timeout' && member.moderatable) {
+    await member.timeout(10 * 60 * 1000, 'Anti-raid join threshold reached');
+    actionResult = 'Timed out newest member for 10 minutes';
+  } else if (action === 'restrict') {
+    await restrictions.restrictMember(db, member.guild, member, client.user, {
+      reason: `Anti-raid threshold: ${joins.length} joins in ${windowSeconds}s`,
+      source: 'anti-raid'
+    }).then((result) => {
+      actionResult = `Restricted newest member. Case #${result.caseId}`;
+    }).catch((err) => {
+      actionResult = `Restrict failed: ${err.message}`;
+    });
+  }
+
+  await systemLog(db, member.guild, 'security', {
+    title: 'Anti-Raid Triggered',
+    target: member.user,
+    fields: [
+      { name: 'Window', value: `${joins.length}/${limit} joins in ${windowSeconds}s`, inline: true },
+      { name: 'Action', value: actionResult, inline: true }
+    ]
+  }).catch(() => null);
+}
+
+async function handleBotAddGuard(member) {
+  if (!member.user.bot || member.id === client.user.id) return false;
+  if (!configBool(member.guild.id, 'bot_add_guard_enabled', true)) return false;
+
+  const entry = await fetchRecentBotAddAudit(member.guild, member.id);
+  const executor = entry?.executor || null;
+  const allowed = executor && (executor.id === member.guild.ownerId || isBotOwner(executor.id));
+
+  if (allowed) {
+    await systemLog(db, member.guild, 'security', {
+      title: 'Bot Add Allowed',
+      target: member.user,
+      actor: executor,
+      fields: [{ name: 'Reason', value: 'Added by server owner or protected bot owner.' }]
+    }).catch(() => null);
+    return false;
+  }
+
+  const reason = executor
+    ? `Bot added by unauthorized user ${executor.tag || executor.id}`
+    : 'Bot added by unknown user; audit log unavailable';
+  let kicked = false;
+  if (member.kickable) {
+    await member.kick(reason).then(() => { kicked = true; }).catch(() => null);
+  }
+
+  await systemLog(db, member.guild, 'security', {
+    title: kicked ? 'Unauthorized Bot Kicked' : 'Unauthorized Bot Detected',
+    target: member.user,
+    actor: executor,
+    fields: [
+      { name: 'Result', value: kicked ? 'Kicked immediately' : 'Could not kick; check my role position and permissions.', inline: true },
+      { name: 'Reason', value: reason }
+    ]
+  }).catch(() => null);
+  return kicked;
+}
+
+async function fetchRecentBotAddAudit(guild, targetId) {
+  const me = guild.members.me;
+  if (!me?.permissions.has(PermissionsBitField.Flags.ViewAuditLog)) return null;
+  const logs = await guild.fetchAuditLogs({ type: AuditLogEvent.BotAdd, limit: 5 }).catch(() => null);
+  if (!logs) return null;
+  const recentCutoff = Date.now() - 30 * 1000;
+  return logs.entries.find((entry) => {
+    const targetMatches = entry.target?.id === targetId;
+    const recent = Number(entry.createdTimestamp || 0) >= recentCutoff;
+    return targetMatches && recent;
+  }) || null;
 }
 
 async function sendWelcome(member) {

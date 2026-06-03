@@ -39,17 +39,33 @@ const CHANNEL_CONFIG_KEYS = new Set([
   'executor_updates_channel',
   'counting_channel',
   'welcome_channel',
+  'level_announce_channel',
   'member_count_voice'
 ]);
 
 const ROLE_CONFIG_KEYS = new Set([
   'restrict_perms_role',
   'restricted_role',
-  'update_ping_role'
+  'update_ping_role',
+  'auto_role'
 ]);
 
 const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'authorized_roles']);
 const USER_LIST_CONFIG_KEYS = new Set(['admin_users']);
+const BOOLEAN_CONFIG_KEYS = new Set([
+  'ai_moderation_enabled',
+  'anti_raid_enabled',
+  'bot_add_guard_enabled',
+  'economy_enabled',
+  'achievements_enabled',
+  'leveling_enabled'
+]);
+const NUMBER_CONFIG_KEYS = new Set([
+  'anti_raid_join_limit',
+  'anti_raid_window_seconds',
+  'xp_per_message_min',
+  'xp_per_message_max'
+]);
 const EMBED_STYLE_KEYS = new Set(Object.keys(EMBED_STYLES));
 
 const CONFIG_LABELS = {
@@ -62,14 +78,28 @@ const CONFIG_LABELS = {
   roblox_updates_channel: 'Roblox updates channel',
   executor_updates_channel: 'Executor updates channel',
   update_ping_role: 'Update ping role',
+  auto_role: 'Auto role',
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
   welcome_message: 'Welcome message',
+  level_announce_channel: 'Level announcements channel',
   member_count_voice: 'Member count voice channel',
   embed_style: 'Embed style',
   admin_users: 'Admin users',
   admin_roles: 'Admin roles',
   authorized_roles: 'Restrict review roles',
+  ai_moderation_enabled: 'AI moderation enabled',
+  anti_raid_enabled: 'Anti-raid enabled',
+  anti_raid_join_limit: 'Anti-raid join limit',
+  anti_raid_window_seconds: 'Anti-raid window seconds',
+  anti_raid_action: 'Anti-raid action',
+  bot_add_guard_enabled: 'Bot add guard enabled',
+  economy_enabled: 'Economy enabled',
+  achievements_enabled: 'Achievements enabled',
+  leveling_enabled: 'Leveling enabled',
+  xp_per_message_min: 'XP per message min',
+  xp_per_message_max: 'XP per message max',
+  role_level_rewards: 'Role-level rewards',
   sticky: 'Sticky message'
 };
 
@@ -356,6 +386,24 @@ function guildDetailPayload(client, db, guildId) {
       endsAt: row.ends_at,
       ended: Boolean(row.ended)
     })),
+    progression: {
+      topXp: safePayloadSection(errors, 'XP leaderboard', [], () => db.listProgressLeaderboard(guild.id, 'xp', 5)).map((row) => ({
+        userId: row.user_id,
+        userLabel: userLabel(client, guild, row.user_id),
+        level: row.level,
+        xp: row.xp,
+        balance: row.balance,
+        messages: row.messages
+      })),
+      topBalance: safePayloadSection(errors, 'coin leaderboard', [], () => db.listProgressLeaderboard(guild.id, 'balance', 5)).map((row) => ({
+        userId: row.user_id,
+        userLabel: userLabel(client, guild, row.user_id),
+        level: row.level,
+        xp: row.xp,
+        balance: row.balance,
+        messages: row.messages
+      }))
+    },
     aiPrompts: safePayloadSection(errors, 'AI prompts', [], () => db.listActiveAiPrompts('guild', guild.id, 10)),
     state: {
       countingNumber: safePayloadSection(errors, 'counting state', 0, () => db.getState(guild.id, 'counting_number', 0)),
@@ -429,7 +477,9 @@ function ownerPayload(db, guilds, tables) {
       needsSetup: guilds.filter((guild) => guild.missingCritical?.length > 0).length,
       activeRestrictions: Number(tables.restrictions || 0),
       cases: Number(tables.cases || 0),
-      tickets: Number(tables.tickets || 0)
+      tickets: Number(tables.tickets || 0),
+      trackedMembers: Number(tables.member_progress || 0),
+      achievements: Number(tables.member_achievements || 0)
     }
   };
 }
@@ -439,8 +489,10 @@ function configInputType(key) {
   if (ROLE_CONFIG_KEYS.has(key)) return 'role';
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return 'role-list';
   if (USER_LIST_CONFIG_KEYS.has(key)) return 'user-list';
+  if (BOOLEAN_CONFIG_KEYS.has(key)) return 'boolean';
+  if (NUMBER_CONFIG_KEYS.has(key)) return 'number';
   if (key === 'embed_style') return 'style';
-  if (key === 'sticky') return 'json';
+  if (key === 'sticky' || key === 'role_level_rewards') return 'json';
   if (key === 'welcome_message') return 'message';
   return 'text';
 }
@@ -730,13 +782,32 @@ function normalizeConfigValue(key, value) {
     return String(value || DEFAULT_GUILD_CONFIG.welcome_message).slice(0, 1000);
   }
 
-  if (key === 'sticky') {
+  if (BOOLEAN_CONFIG_KEYS.has(key)) {
+    if (typeof value === 'boolean') return value;
+    const lowered = String(value || '').trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on', 'enabled', 'enable'].includes(lowered)) return true;
+    if (['0', 'false', 'no', 'off', 'disabled', 'disable'].includes(lowered)) return false;
+    return Boolean(DEFAULT_GUILD_CONFIG[key]);
+  }
+
+  if (NUMBER_CONFIG_KEYS.has(key)) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : DEFAULT_GUILD_CONFIG[key];
+  }
+
+  if (key === 'anti_raid_action') {
+    const action = String(value || DEFAULT_GUILD_CONFIG.anti_raid_action).trim().toLowerCase();
+    return ['restrict', 'kick', 'timeout', 'log'].includes(action) ? action : DEFAULT_GUILD_CONFIG.anti_raid_action;
+  }
+
+  if (key === 'sticky' || key === 'role_level_rewards') {
+    if (key === 'role_level_rewards' && !value) return [];
     if (!value) return null;
     if (typeof value === 'object') return value;
     try {
       return JSON.parse(String(value));
     } catch {
-      throw httpError(400, 'Sticky config must be valid JSON.');
+      throw httpError(400, `${CONFIG_LABELS[key] || key} must be valid JSON.`);
     }
   }
 

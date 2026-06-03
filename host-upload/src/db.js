@@ -12,6 +12,7 @@ const DEFAULT_GUILD_CONFIG = {
   roblox_updates_channel: null,
   executor_updates_channel: null,
   update_ping_role: null,
+  auto_role: null,
   counting_channel: null,
   welcome_channel: null,
   welcome_message: 'Welcome {user} to {server}. You are member #{memberCount}.',
@@ -20,6 +21,19 @@ const DEFAULT_GUILD_CONFIG = {
   admin_users: [],
   admin_roles: [],
   authorized_roles: [],
+  ai_moderation_enabled: true,
+  anti_raid_enabled: true,
+  anti_raid_join_limit: 6,
+  anti_raid_window_seconds: 20,
+  anti_raid_action: 'restrict',
+  bot_add_guard_enabled: true,
+  economy_enabled: true,
+  achievements_enabled: true,
+  leveling_enabled: true,
+  xp_per_message_min: 12,
+  xp_per_message_max: 22,
+  level_announce_channel: null,
+  role_level_rewards: [],
   sticky: null
 };
 
@@ -244,6 +258,28 @@ class BotDatabase {
         count INTEGER NOT NULL DEFAULT 0,
         last_used_at INTEGER NOT NULL,
         PRIMARY KEY (command_name, source, guild_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS member_progress (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        xp INTEGER NOT NULL DEFAULT 0,
+        level INTEGER NOT NULL DEFAULT 1,
+        balance INTEGER NOT NULL DEFAULT 0,
+        daily_streak INTEGER NOT NULL DEFAULT 0,
+        last_daily_at INTEGER,
+        last_xp_at INTEGER,
+        messages INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS member_achievements (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        earned_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, user_id, key)
       );
     `);
     this.ensureDefaultPromptPresets();
@@ -655,6 +691,126 @@ class BotDatabase {
          LIMIT ?`
       )
       .all(Math.max(1, Math.min(limit, 50)));
+  }
+
+  ensureMemberProgress(guildId, userId) {
+    const existing = this.getMemberProgress(guildId, userId);
+    if (existing) return existing;
+    this.db
+      .prepare(
+        `INSERT INTO member_progress
+         (guild_id, user_id, xp, level, balance, daily_streak, last_daily_at, last_xp_at, messages, updated_at)
+         VALUES (?, ?, 0, 1, 0, 0, NULL, NULL, 0, ?)`
+      )
+      .run(guildId, userId, now());
+    return this.getMemberProgress(guildId, userId);
+  }
+
+  getMemberProgress(guildId, userId) {
+    return this.db
+      .prepare('SELECT * FROM member_progress WHERE guild_id = ? AND user_id = ?')
+      .get(guildId, userId) || null;
+  }
+
+  addMemberProgress(guildId, userId, updates = {}) {
+    const current = this.ensureMemberProgress(guildId, userId);
+    const next = {
+      xp: Math.max(0, Number(current.xp || 0) + Number(updates.xp || 0)),
+      level: Math.max(1, Number(updates.level ?? current.level ?? 1)),
+      balance: Math.max(0, Number(current.balance || 0) + Number(updates.balance || 0)),
+      daily_streak: Number(updates.dailyStreak ?? current.daily_streak ?? 0),
+      last_daily_at: updates.lastDailyAt ?? current.last_daily_at,
+      last_xp_at: updates.lastXpAt ?? current.last_xp_at,
+      messages: Math.max(0, Number(current.messages || 0) + Number(updates.messages || 0))
+    };
+    this.db
+      .prepare(
+        `UPDATE member_progress
+         SET xp = ?, level = ?, balance = ?, daily_streak = ?, last_daily_at = ?,
+             last_xp_at = ?, messages = ?, updated_at = ?
+         WHERE guild_id = ? AND user_id = ?`
+      )
+      .run(
+        next.xp,
+        next.level,
+        next.balance,
+        next.daily_streak,
+        next.last_daily_at || null,
+        next.last_xp_at || null,
+        next.messages,
+        now(),
+        guildId,
+        userId
+      );
+    return this.getMemberProgress(guildId, userId);
+  }
+
+  setMemberProgress(guildId, userId, fields = {}) {
+    const current = this.ensureMemberProgress(guildId, userId);
+    const next = {
+      xp: fields.xp ?? current.xp,
+      level: fields.level ?? current.level,
+      balance: fields.balance ?? current.balance,
+      daily_streak: fields.dailyStreak ?? current.daily_streak,
+      last_daily_at: fields.lastDailyAt ?? current.last_daily_at,
+      last_xp_at: fields.lastXpAt ?? current.last_xp_at,
+      messages: fields.messages ?? current.messages
+    };
+    this.db
+      .prepare(
+        `UPDATE member_progress
+         SET xp = ?, level = ?, balance = ?, daily_streak = ?, last_daily_at = ?,
+             last_xp_at = ?, messages = ?, updated_at = ?
+         WHERE guild_id = ? AND user_id = ?`
+      )
+      .run(
+        Number(next.xp || 0),
+        Math.max(1, Number(next.level || 1)),
+        Math.max(0, Number(next.balance || 0)),
+        Math.max(0, Number(next.daily_streak || 0)),
+        next.last_daily_at || null,
+        next.last_xp_at || null,
+        Math.max(0, Number(next.messages || 0)),
+        now(),
+        guildId,
+        userId
+      );
+    return this.getMemberProgress(guildId, userId);
+  }
+
+  listProgressLeaderboard(guildId, sort = 'xp', limit = 10) {
+    const column = sort === 'balance' ? 'balance' : 'xp';
+    return this.db
+      .prepare(
+        `SELECT * FROM member_progress
+         WHERE guild_id = ?
+         ORDER BY ${column} DESC, level DESC, messages DESC
+         LIMIT ?`
+      )
+      .all(guildId, Math.max(1, Math.min(limit, 25)));
+  }
+
+  addAchievement(guildId, userId, key) {
+    const before = this.db
+      .prepare('SELECT 1 FROM member_achievements WHERE guild_id = ? AND user_id = ? AND key = ?')
+      .get(guildId, userId, key);
+    if (before) return false;
+    this.db
+      .prepare(
+        'INSERT INTO member_achievements (guild_id, user_id, key, earned_at) VALUES (?, ?, ?, ?)'
+      )
+      .run(guildId, userId, key, now());
+    return true;
+  }
+
+  listAchievements(guildId, userId) {
+    return this.db
+      .prepare(
+        `SELECT * FROM member_achievements
+         WHERE guild_id = ? AND user_id = ?
+         ORDER BY earned_at ASC`
+      )
+      .all(guildId, userId);
   }
 
   databaseStats() {

@@ -374,13 +374,14 @@ async function handleReviewButton(db, interaction) {
 
 async function reapplyRestrictionOnJoin(db, member) {
   const restriction = db.getActiveRestriction(member.guild.id, member.id);
-  if (!restriction) return;
+  if (!restriction) return false;
   const roleId = db.getConfig(member.guild.id, 'restricted_role');
-  if (!roleId) return;
+  if (!roleId) return false;
   await member.roles.set([roleId], 'Active restriction reapplied after rejoin').catch(() => null);
   await moderationLog(db, member.guild, 0, 'Restriction Reapplied', member.user, null, restriction.reason, [
     { name: 'Reason', value: 'Member left and joined back while restricted.' }
   ]);
+  return true;
 }
 
 async function expireDueRestrictions(db, client) {

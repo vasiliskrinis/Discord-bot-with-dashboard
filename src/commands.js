@@ -24,6 +24,7 @@ const { isBotOwner, requireBotOwner, requireModerator, requireRestrict } = requi
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
 const games = require('./services/games');
+const progression = require('./services/progression');
 const { createEmbedFromAI } = require('./services/ai');
 const { moderationLog } = require('./services/logger');
 
@@ -77,6 +78,12 @@ const SETUP_CHANNELS = [
     types: [ChannelType.GuildText]
   },
   {
+    key: 'level_announce_channel',
+    label: 'Level Announcements',
+    description: 'Level-up and achievement announcements.',
+    types: [ChannelType.GuildText]
+  },
+  {
     key: 'member_count_voice',
     label: 'Member Count Voice',
     description: 'Voice channel renamed with member count.',
@@ -99,6 +106,11 @@ const SETUP_SINGLE_ROLES = [
     key: 'update_ping_role',
     label: 'Update Ping Role',
     description: 'Role pinged for Roblox/executor updates.'
+  },
+  {
+    key: 'auto_role',
+    label: 'Auto Role',
+    description: 'Role automatically given to new human members.'
   }
 ];
 
@@ -174,6 +186,13 @@ const PREFIX_ALIASES = {
   banlist: 'ban-list',
   embedcreate: 'embed-create',
   boosterrole: 'booster-role',
+  bal: 'balance',
+  coins: 'balance',
+  economy: 'profile',
+  rank: 'level',
+  levels: 'leaderboard',
+  rolelevel: 'role-level',
+  rolelvl: 'role-level',
   setupmenu: 'setup'
 };
 
@@ -525,7 +544,56 @@ function slashCommands() {
           { name: 'scramble', value: 'scramble' }
         )
       )
-      .addUserOption((option) => option.setName('opponent').setDescription('Opponent for tic tac toe.'))
+      .addUserOption((option) => option.setName('opponent').setDescription('Opponent for tic tac toe.')),
+
+    new SlashCommandBuilder()
+      .setName('balance')
+      .setDescription('Show a member coin balance.')
+      .addUserOption((option) => option.setName('user').setDescription('Member.')),
+
+    new SlashCommandBuilder()
+      .setName('daily')
+      .setDescription('Claim your daily economy reward.'),
+
+    new SlashCommandBuilder()
+      .setName('profile')
+      .setDescription('Show level, coins, messages, streak, and achievements.')
+      .addUserOption((option) => option.setName('user').setDescription('Member.')),
+
+    new SlashCommandBuilder()
+      .setName('level')
+      .setDescription('Show a member level.')
+      .addUserOption((option) => option.setName('user').setDescription('Member.')),
+
+    new SlashCommandBuilder()
+      .setName('leaderboard')
+      .setDescription('Show the server XP or coin leaderboard.')
+      .addStringOption((option) => option.setName('type').setDescription('Leaderboard type.').addChoices(
+        { name: 'XP', value: 'xp' },
+        { name: 'Coins', value: 'balance' }
+      )),
+
+    new SlashCommandBuilder()
+      .setName('role-level')
+      .setDescription('Manage role rewards by level.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Add or replace a level role reward.')
+          .addIntegerOption((option) => option.setName('level').setDescription('Required level.').setRequired(true).setMinValue(1).setMaxValue(500))
+          .addRoleOption((option) => option.setName('role').setDescription('Reward role.').setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove a level role reward.')
+          .addIntegerOption((option) => option.setName('level').setDescription('Reward level.').setRequired(true).setMinValue(1).setMaxValue(500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('list')
+          .setDescription('List configured level role rewards.')
+      )
   ];
 
   return commands.map((command) => command.toJSON());
@@ -668,7 +736,8 @@ function setupOverviewEmbed(db, guildId) {
         value: [
           setupLine('Restrict perms', roleValue(config.restrict_perms_role)),
           setupLine('Restricted role', roleValue(config.restricted_role)),
-          setupLine('Update ping', roleValue(config.update_ping_role))
+          setupLine('Update ping', roleValue(config.update_ping_role)),
+          setupLine('Auto role', roleValue(config.auto_role))
         ].join('\n')
       },
       {
@@ -682,6 +751,7 @@ function setupOverviewEmbed(db, guildId) {
           setupLine('Executor updates', channelValue(config.executor_updates_channel)),
           setupLine('Counting', channelValue(config.counting_channel)),
           setupLine('Welcome', channelValue(config.welcome_channel)),
+          setupLine('Level announce', channelValue(config.level_announce_channel)),
           setupLine('Member count', channelValue(config.member_count_voice))
         ].join('\n')
       },
@@ -1414,6 +1484,20 @@ async function handleSlash(interaction, db, client) {
         break;
       }
 
+      case 'balance':
+      case 'daily':
+      case 'profile':
+      case 'level':
+      case 'leaderboard': {
+        await handleProgressionSlash(interaction, db);
+        break;
+      }
+
+      case 'role-level': {
+        await handleRoleLevelSlash(interaction, db);
+        break;
+      }
+
       default:
         await reply(interaction, { embeds: [error(db, interaction.guild.id, 'Unknown command.')] }, true);
     }
@@ -1906,6 +1990,109 @@ async function handleBoosterRole(interaction, db) {
   await reply(interaction, { embeds: [success(db, interaction.guild.id, `Booster role ready: ${role}.`)] }, true);
 }
 
+async function handleProgressionSlash(interaction, db) {
+  const name = interaction.commandName;
+
+  if (name === 'daily') {
+    const result = progression.claimDaily(db, interaction.guild.id, interaction.user.id);
+    if (!result.claimed) {
+      await reply(interaction, {
+        embeds: [
+          buildEmbed(db, interaction.guild.id, {
+            title: 'Daily Reward',
+            description: `You already claimed daily. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+            style: 'amber'
+          })
+        ]
+      }, true);
+      return;
+    }
+
+    await reply(interaction, {
+      embeds: [
+        success(
+          db,
+          interaction.guild.id,
+          `You claimed **${result.reward} coins**. Streak: **${result.streak}**.\nBalance: **${result.progress.balance} coins**.`
+        )
+      ]
+    }, true);
+    return;
+  }
+
+  if (name === 'leaderboard') {
+    const type = interaction.options.getString('type') || 'xp';
+    const rows = db.listProgressLeaderboard(interaction.guild.id, type, 10);
+    await reply(interaction, { embeds: [progression.leaderboardEmbed(db, interaction.guild, rows, type)] });
+    return;
+  }
+
+  const user = interaction.options.getUser('user') || interaction.user;
+  const progress = db.ensureMemberProgress(interaction.guild.id, user.id);
+  const achievements = db.listAchievements(interaction.guild.id, user.id);
+
+  if (name === 'balance') {
+    await reply(interaction, {
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: 'Balance',
+          description: `${user} has **${progress.balance || 0} coins**.`,
+          style: 'amber'
+        })
+      ]
+    });
+    return;
+  }
+
+  if (name === 'level') {
+    await reply(interaction, {
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: 'Level',
+          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
+          style: 'royal'
+        })
+      ]
+    });
+    return;
+  }
+
+  await reply(interaction, { embeds: [progression.profileEmbed(db, interaction.guild, user, progress, achievements)] });
+}
+
+async function handleRoleLevelSlash(interaction, db) {
+  requireModerator(db, interaction.member);
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === 'add') {
+    const level = interaction.options.getInteger('level');
+    const role = interaction.options.getRole('role');
+    progression.addRoleReward(db, interaction.guild.id, level, role.id);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Level ${level} now rewards ${role}.`)] }, true);
+    return;
+  }
+
+  if (sub === 'remove') {
+    const level = interaction.options.getInteger('level');
+    progression.removeRoleReward(db, interaction.guild.id, level);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Removed role reward for level ${level}.`)] }, true);
+    return;
+  }
+
+  const rewards = progression.listRoleRewards(db, interaction.guild.id);
+  await reply(interaction, {
+    embeds: [
+      buildEmbed(db, interaction.guild.id, {
+        title: 'Role Level Rewards',
+        description: rewards.length
+          ? rewards.map((reward) => `Level **${reward.level}** -> <@&${reward.roleId}>`).join('\n')
+          : 'No role-level rewards configured.',
+        style: 'ocean'
+      })
+    ]
+  }, true);
+}
+
 function colorFromInput(input) {
   if (!input) return null;
   const value = String(input).trim();
@@ -1938,6 +2125,7 @@ function helpEmbed(db, guildId) {
       '**Roles:** give-role, remove-role, temp-role, temp-role-remove, temp-role-list, booster-role',
       '**Channel/User Locks:** lock-user, unlock-user, voice-mute',
       '**Tickets/AI:** mention the bot for AI, embed-create',
+      '**Economy/Levels:** daily, balance, profile, level, leaderboard, role-level',
       '**Server Assets:** steal-emoji, steal-sticker',
       '**Server systems:** configured from setup menu',
       '**Games:** game tictactoe/coinflip/dice/rps/8ball/slots/trivia/roulette/scramble',
@@ -2364,6 +2552,110 @@ async function handleOwnerPrefix(message, db, client, command, args) {
   throw new Error('Owner command not found. Use guilds, leaveguild, broadcast, serversettings, commandusage, riskreport, panic mode, panic ai, db stats, db backup, restart, shutdown, maintenance, status, activity, lock, unlock, blacklist, unblacklist, audit, restoreuser, rolefix, forceunrestrict.');
 }
 
+async function handleProgressionPrefix(message, db, client, command, args) {
+  if (command === 'daily') {
+    const result = progression.claimDaily(db, message.guild.id, message.author.id);
+    if (!result.claimed) {
+      await message.reply({
+        embeds: [
+          buildEmbed(db, message.guild.id, {
+            title: 'Daily Reward',
+            description: `You already claimed daily. Try again <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+            style: 'amber'
+          })
+        ]
+      });
+      return;
+    }
+
+    await message.reply({
+      embeds: [
+        success(
+          db,
+          message.guild.id,
+          `You claimed **${result.reward} coins**. Streak: **${result.streak}**.\nBalance: **${result.progress.balance} coins**.`
+        )
+      ]
+    });
+    return;
+  }
+
+  if (command === 'leaderboard') {
+    const type = ['balance', 'coins', 'coin'].includes(String(args[0] || '').toLowerCase()) ? 'balance' : 'xp';
+    const rows = db.listProgressLeaderboard(message.guild.id, type, 10);
+    await message.reply({ embeds: [progression.leaderboardEmbed(db, message.guild, rows, type)] });
+    return;
+  }
+
+  const user = args[0] ? await resolveUser(client, message.guild, args[0]) : message.author;
+  if (!user) throw new Error('User not found.');
+  const progress = db.ensureMemberProgress(message.guild.id, user.id);
+  const achievements = db.listAchievements(message.guild.id, user.id);
+
+  if (command === 'balance') {
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Balance',
+          description: `${user} has **${progress.balance || 0} coins**.`,
+          style: 'amber'
+        })
+      ]
+    });
+    return;
+  }
+
+  if (command === 'level') {
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Level',
+          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
+          style: 'royal'
+        })
+      ]
+    });
+    return;
+  }
+
+  await message.reply({ embeds: [progression.profileEmbed(db, message.guild, user, progress, achievements)] });
+}
+
+async function handleRoleLevelPrefix(message, db, args) {
+  const sub = String(args.shift() || 'list').toLowerCase();
+
+  if (sub === 'add' || sub === 'set') {
+    const level = Number(args.shift());
+    const roleId = idFromMention(args.shift());
+    const role = roleId ? await message.guild.roles.fetch(roleId).catch(() => null) : null;
+    if (!Number.isFinite(level) || level < 1 || !role) throw new Error('Usage: r!role-level add 5 @Role');
+    progression.addRoleReward(db, message.guild.id, level, role.id);
+    await message.reply({ embeds: [success(db, message.guild.id, `Level ${level} now rewards ${role}.`)] });
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'delete') {
+    const level = Number(args.shift());
+    if (!Number.isFinite(level) || level < 1) throw new Error('Usage: r!role-level remove 5');
+    progression.removeRoleReward(db, message.guild.id, level);
+    await message.reply({ embeds: [success(db, message.guild.id, `Removed role reward for level ${level}.`)] });
+    return;
+  }
+
+  const rewards = progression.listRoleRewards(db, message.guild.id);
+  await message.reply({
+    embeds: [
+      buildEmbed(db, message.guild.id, {
+        title: 'Role Level Rewards',
+        description: rewards.length
+          ? rewards.map((reward) => `Level **${reward.level}** -> <@&${reward.roleId}>`).join('\n')
+          : 'No role-level rewards configured.',
+        style: 'ocean'
+      })
+    ]
+  });
+}
+
 async function handlePrefixCommand(message, db, client, command, args) {
   ensureGuild(message);
   if (db.isBotBanned('member', message.author.id) && !isBotOwner(message.author.id)) return;
@@ -2386,6 +2678,17 @@ async function handlePrefixCommand(message, db, client, command, args) {
   if (command === 'afk') {
     db.setAfk(message.guild.id, message.author.id, reasonOr(args, 'AFK'));
     await message.reply({ embeds: [success(db, message.guild.id, 'AFK enabled.')] });
+    return;
+  }
+
+  if (['balance', 'daily', 'profile', 'level', 'leaderboard'].includes(command)) {
+    await handleProgressionPrefix(message, db, client, command, args);
+    return;
+  }
+
+  if (command === 'role-level') {
+    requireModerator(db, message.member);
+    await handleRoleLevelPrefix(message, db, args);
     return;
   }
 

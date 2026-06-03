@@ -81,26 +81,25 @@ function moderateText(content) {
   return { blocked: false };
 }
 
-function parseAiModerationCommand(message, clientId) {
+function parseAiModerationCommand(message, clientId, options = {}) {
   const content = stripBotMention(message.content, clientId).toLowerCase();
-  const mentioned = message.mentions.members.first();
+  const mentioned = message.mentions.members.first() || options.targetMember || null;
   if (!mentioned) return null;
 
   const reasonMatch = message.content.match(/\b(?:because|cause|for|reason)\b\s+(.+)$/i);
   const reason = reasonMatch?.[1]?.trim() || 'AI command request';
 
   const actions = [
-    ['restrict', 'restrict'],
-    ['unrestrict', 'unrestrict'],
-    ['ban', 'ban'],
-    ['kick', 'kick'],
-    ['mute', 'mute'],
-    ['unmute', 'unmute'],
-    ['warn', 'warn'],
-    ['unwarn', 'unwarn']
+    [/\b(unrestrict|free|release)\b/, 'unrestrict'],
+    [/\bunmute\b/, 'unmute'],
+    [/\brestrict\b|\bjail\b/, 'restrict'],
+    [/\bban\b/, 'ban'],
+    [/\bkick\b/, 'kick'],
+    [/\bmute\b|\btimeout\b/, 'mute'],
+    [/\bwarn\b/, 'warn']
   ];
 
-  const action = actions.find(([word]) => content.includes(word));
+  const action = actions.find(([pattern]) => pattern.test(content));
   if (!action) return null;
   return {
     command: action[1],

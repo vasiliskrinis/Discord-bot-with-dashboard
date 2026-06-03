@@ -1151,3 +1151,281 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Discord-style dark control room */
+:root {
+  --bg: #080d1a;
+  --surface: rgba(23, 28, 44, 0.94);
+  --surface-2: rgba(32, 38, 58, 0.92);
+  --surface-3: #101827;
+  --border: rgba(154, 170, 203, 0.18);
+  --text: #f4f7fb;
+  --muted: #a7b1c2;
+  --accent: #5865f2;
+  --accent-soft: rgba(88, 101, 242, 0.2);
+  --success: #42d392;
+  --success-soft: rgba(66, 211, 146, 0.14);
+  --warning: #f5b94c;
+  --warning-soft: rgba(245, 185, 76, 0.14);
+  --danger: #ff5c7a;
+  --danger-soft: rgba(255, 92, 122, 0.14);
+  --shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
+}
+
+body {
+  background:
+    linear-gradient(135deg, #16033d 0%, #0f2168 45%, #063c64 100%);
+  color: var(--text);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.48), rgba(0, 0, 0, 0.08));
+}
+
+.app-shell {
+  background: rgba(5, 9, 20, 0.35);
+  backdrop-filter: blur(14px);
+}
+
+.sidebar {
+  background: rgba(9, 14, 28, 0.9);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 12px 0 34px rgba(0, 0, 0, 0.18);
+}
+
+.workspace {
+  position: relative;
+}
+
+.topbar h1,
+.server-header h2,
+.panel h2 {
+  color: var(--text);
+}
+
+.topbar p,
+.brand-copy span,
+.guild-item small,
+.data-row span,
+.data-row small,
+.owner-server-row span,
+.panel-head .muted,
+.muted {
+  color: var(--muted);
+}
+
+.login-panel,
+.stat-card,
+.panel,
+.server-header,
+.action-bar,
+.tabs,
+.modal-panel {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.login-panel {
+  backdrop-filter: blur(20px);
+}
+
+.login-mark,
+.avatar {
+  background: linear-gradient(135deg, #5865f2, #1fb6ff);
+  box-shadow: 0 12px 30px rgba(88, 101, 242, 0.34);
+}
+
+input,
+select,
+textarea {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(8, 13, 26, 0.72);
+  color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #7f8ca1;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(88, 101, 242, 0.9);
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.22);
+}
+
+.secondary-button,
+.icon-button {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.secondary-button:hover,
+.icon-button:hover {
+  border-color: rgba(88, 101, 242, 0.86);
+  color: #ffffff;
+  background: rgba(88, 101, 242, 0.16);
+}
+
+.primary-button,
+.danger-button,
+.login-panel button,
+.presence-form button,
+.config-form button,
+.control-form button[type="submit"] {
+  background: linear-gradient(135deg, #5865f2, #2f7dff);
+  box-shadow: 0 10px 24px rgba(47, 125, 255, 0.24);
+}
+
+.danger-button {
+  background: linear-gradient(135deg, #ff5c7a, #d93655);
+}
+
+.tabs {
+  background: rgba(12, 18, 34, 0.78);
+}
+
+.tab {
+  color: var(--muted);
+}
+
+.tab.is-active {
+  background: linear-gradient(135deg, #5865f2, #2f7dff);
+  color: #ffffff;
+}
+
+.guild-item {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.guild-item:hover,
+.guild-item.is-active {
+  border-color: rgba(88, 101, 242, 0.55);
+  background: rgba(88, 101, 242, 0.16);
+}
+
+.pill {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.pill.warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.pill.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.stat-card,
+.mini-card,
+.switch-row,
+.picker-option {
+  background: var(--surface-2);
+}
+
+.stat-card strong,
+.mini-card strong {
+  color: #ffffff;
+}
+
+.panel-head h2 {
+  color: #dfe6f2;
+  text-transform: none;
+}
+
+.switch-row {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.switch-row input {
+  background: #354057;
+}
+
+.switch-row input:checked {
+  background: linear-gradient(135deg, #5865f2, #1fb6ff);
+}
+
+.table-wrap,
+th,
+td,
+.data-row,
+.owner-server-row,
+.mini-card {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+th {
+  background: rgba(12, 18, 34, 0.98);
+  color: #c5cfdd;
+}
+
+.config-risk td {
+  background: rgba(255, 92, 122, 0.11);
+}
+
+.bar-track,
+.empty-state,
+.muted-swatch {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.bar-fill {
+  background: linear-gradient(90deg, #5865f2, #42d392);
+}
+
+.modal-overlay {
+  background: rgba(3, 6, 14, 0.74);
+  backdrop-filter: blur(10px);
+}
+
+.picker-option.is-selected,
+.picker-option:hover {
+  background: rgba(88, 101, 242, 0.2);
+}
+
+.toast {
+  background: #101827;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+@media (max-width: 640px) {
+  .workspace {
+    padding: 26px 20px;
+  }
+
+  .stat-grid,
+  .content-grid,
+  .content-grid.three,
+  .switch-grid,
+  .presence-form,
+  .config-form,
+  .control-form {
+    grid-template-columns: 1fr;
+  }
+
+  .tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tab {
+    min-width: 0;
+  }
+
+  .stat-card {
+    min-height: 96px;
+  }
+}

@@ -464,6 +464,8 @@ function typeLabel(type) {
     'role-list': 'roles',
     'user-list': 'users',
     style: 'style',
+    boolean: 'toggle',
+    number: 'number',
     json: 'json',
     message: 'message',
     text: 'text'
@@ -546,7 +548,9 @@ function renderOwnerControls(overview) {
     ['Ready Servers', health.configuredServers ?? 0],
     ['Needs Setup', health.needsSetup ?? 0],
     ['Cases', health.cases ?? 0],
-    ['Tickets', health.tickets ?? 0]
+    ['Tickets', health.tickets ?? 0],
+    ['Tracked Members', health.trackedMembers ?? 0],
+    ['Achievements', health.achievements ?? 0]
   ].map(([label, value]) => `
     <div class="mini-card">
       <span>${escapeHtml(label)}</span>
@@ -701,6 +705,20 @@ function renderScheduled(detail) {
       title: 'Update snapshots',
       detail: `Roblox ${detail.state.robloxSnapshotSaved ? 'saved' : 'empty'} - Executor ${detail.state.executorSnapshotSaved ? 'saved' : 'empty'}`,
       meta: 'Watcher state'
+    },
+    {
+      title: 'Top Level',
+      detail: detail.progression?.topXp?.[0]
+        ? `${detail.progression.topXp[0].userLabel} - level ${detail.progression.topXp[0].level}`
+        : 'No XP tracked',
+      meta: 'Leveling'
+    },
+    {
+      title: 'Top Balance',
+      detail: detail.progression?.topBalance?.[0]
+        ? `${detail.progression.topBalance[0].userLabel} - ${formatNumber(detail.progression.topBalance[0].balance)} coins`
+        : 'No coins tracked',
+      meta: 'Economy'
     }
   ];
 

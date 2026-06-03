@@ -70,6 +70,7 @@ function buildEmbed(db, guildId, options = {}) {
   if (options.thumbnail) embed.setThumbnail(options.thumbnail);
   if (options.image) embed.setImage(options.image);
   if (options.author) embed.setAuthor(options.author);
+  if (options.footer) embed.setFooter(typeof options.footer === 'string' ? { text: options.footer } : options.footer);
   if (options.fields?.length) {
     embed.addFields(
       options.fields.map((field) => ({
