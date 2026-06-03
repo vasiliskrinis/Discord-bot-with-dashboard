@@ -356,7 +356,7 @@ function fallbackGuildSummary(guild, err) {
   return {
     id: guild?.id || 'unknown',
     name: guild?.name || 'Unknown server',
-    iconUrl: guild?.iconURL?.({ size: 96 }) || null,
+    iconUrl: guild?.iconURL?.({ size: 128 }) || null,
     ownerId: guild?.ownerId || null,
     memberCount: Number(guild?.memberCount || 0),
     channelCount: collectionSize(guild?.channels?.cache),
@@ -483,7 +483,7 @@ function guildSummary(guild, db) {
   return {
     id: guild.id,
     name: guild.name,
-    iconUrl: guild.iconURL?.({ size: 96 }) || null,
+    iconUrl: guild.iconURL?.({ size: 128 }) || null,
     ownerId: guild.ownerId || null,
     memberCount: Number(guild.memberCount || 0),
     channelCount: collectionSize(guild.channels?.cache),
