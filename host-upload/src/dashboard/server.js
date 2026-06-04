@@ -3,10 +3,19 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { URL } = require('node:url');
-const { ActivityType, ChannelType, PermissionsBitField } = require('discord.js');
+const {
+  ActionRowBuilder,
+  ActivityType,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  PermissionsBitField,
+  StringSelectMenuBuilder
+} = require('discord.js');
 const env = require('../env');
 const { DEFAULT_GUILD_CONFIG } = require('../db');
 const { EMBED_STYLES, buildEmbed } = require('../embeds');
+const community = require('../services/community');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -37,6 +46,9 @@ const CHANNEL_CONFIG_KEYS = new Set([
   'restricted_users_channel',
   'roblox_updates_channel',
   'executor_updates_channel',
+  'verification_channel',
+  'bump_channel',
+  'qna_channel',
   'counting_channel',
   'welcome_channel',
   'level_announce_channel',
@@ -47,10 +59,13 @@ const ROLE_CONFIG_KEYS = new Set([
   'restrict_perms_role',
   'restricted_role',
   'update_ping_role',
+  'verified_role',
+  'swat_guess_role',
   'auto_role'
 ]);
 
 const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'authorized_roles']);
+const CHANNEL_LIST_CONFIG_KEYS = new Set(['restriction_exempt_channels']);
 const USER_LIST_CONFIG_KEYS = new Set(['admin_users']);
 const BOOLEAN_CONFIG_KEYS = new Set([
   'ai_moderation_enabled',
@@ -64,7 +79,8 @@ const NUMBER_CONFIG_KEYS = new Set([
   'anti_raid_join_limit',
   'anti_raid_window_seconds',
   'xp_per_message_min',
-  'xp_per_message_max'
+  'xp_per_message_max',
+  'bump_cooldown_minutes'
 ]);
 const EMBED_STYLE_KEYS = new Set(Object.keys(EMBED_STYLES));
 
@@ -78,6 +94,15 @@ const CONFIG_LABELS = {
   roblox_updates_channel: 'Roblox updates channel',
   executor_updates_channel: 'Executor updates channel',
   update_ping_role: 'Update ping role',
+  verification_channel: 'Verification channel',
+  verified_role: 'Verified role',
+  verification_message: 'Verification message',
+  restriction_exempt_channels: 'Restriction exempt channels',
+  bump_channel: 'Bump channel',
+  bump_cooldown_minutes: 'Bump cooldown minutes',
+  qna_channel: 'Q&A channel',
+  qna_personality: 'Q&A personality',
+  swat_guess_role: 'SWAT guess reward role',
   auto_role: 'Auto role',
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
@@ -110,10 +135,11 @@ const CRITICAL_CONFIG_KEYS = [
   'restricted_users_channel'
 ];
 
-function startDashboard({ client, db }) {
+function startDashboard({ client, clients, db }) {
   if (!env.dashboardEnabled) return null;
 
   const staticRoot = path.join(__dirname, 'public');
+  const dashboardClients = clients?.length ? clients : [client].filter(Boolean);
   const sessions = new Map();
   const passwordRequired = Boolean(env.dashboardPassword);
 
@@ -124,7 +150,7 @@ function startDashboard({ client, db }) {
 
   const server = http.createServer(async (req, res) => {
     try {
-      await handleRequest({ req, res, client, db, staticRoot, sessions, passwordRequired });
+      await handleRequest({ req, res, client, clients: dashboardClients, db, staticRoot, sessions, passwordRequired });
     } catch (err) {
       const status = err.statusCode || 500;
       if (status >= 500) console.error('Dashboard request failed:', err);
@@ -147,7 +173,8 @@ function startDashboard({ client, db }) {
 }
 
 async function handleRequest(context) {
-  const { req, res, client, db, staticRoot, sessions, passwordRequired } = context;
+  const { req, res, clients, db, staticRoot, sessions, passwordRequired } = context;
+  const client = primaryClient(clients);
   const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = normalizeDashboardPath(requestUrl.pathname);
 
@@ -162,7 +189,8 @@ async function handleRequest(context) {
       authenticated: isAuthenticated(req, sessions, passwordRequired),
       passwordRequired,
       localOnly: !passwordRequired,
-      bot: botSummary(client)
+      bot: botSummary(client),
+      bots: botSummaries(clients)
     });
     return;
   }
@@ -200,32 +228,32 @@ async function handleRequest(context) {
     }
 
     if (pathname === '/api/overview' && req.method === 'GET') {
-      sendJson(res, 200, overviewPayload(client, db));
+      sendJson(res, 200, overviewPayload(clients, db));
       return;
     }
 
     if (pathname === '/api/runtime' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      sendJson(res, 200, updateRuntimeFlag(client, db, body));
+      sendJson(res, 200, updateRuntimeFlag(clients, db, body));
       return;
     }
 
     if (pathname === '/api/presence' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      await updatePresence(client, body);
-      sendJson(res, 200, { bot: botSummary(client) });
+      await updatePresence(clients, body);
+      sendJson(res, 200, { bot: botSummary(primaryClient(clients)), bots: botSummaries(clients) });
       return;
     }
 
     if (pathname === '/api/owner/broadcast' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      sendJson(res, 200, await sendOwnerBroadcast(client, db, body));
+      sendJson(res, 200, await sendOwnerBroadcast(clients, db, body));
       return;
     }
 
     if (pathname === '/api/owner/blacklist' && req.method === 'POST') {
       const body = await readJsonBody(req);
-      sendJson(res, 200, updateBotBan(client, db, body));
+      sendJson(res, 200, updateBotBan(clients, db, body));
       return;
     }
 
@@ -234,11 +262,19 @@ async function handleRequest(context) {
       return;
     }
 
+    const guildEmbedMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/embed$/);
+    if (guildEmbedMatch && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const guildId = decodeURIComponent(guildEmbedMatch[1]);
+      sendJson(res, 200, await sendCustomEmbedFromDashboard(clients, db, guildId, body));
+      return;
+    }
+
     const guildActionMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/action$/);
     if (guildActionMatch && req.method === 'POST') {
       const body = await readJsonBody(req);
       const guildId = decodeURIComponent(guildActionMatch[1]);
-      sendJson(res, 200, await runGuildAction(client, db, guildId, body));
+      sendJson(res, 200, await runGuildAction(clients, db, guildId, body));
       return;
     }
 
@@ -246,7 +282,7 @@ async function handleRequest(context) {
     if (guildLeaveMatch && req.method === 'POST') {
       const body = await readJsonBody(req);
       const guildId = decodeURIComponent(guildLeaveMatch[1]);
-      sendJson(res, 200, await leaveGuildFromDashboard(client, db, guildId, body));
+      sendJson(res, 200, await leaveGuildFromDashboard(clients, db, guildId, body));
       return;
     }
 
@@ -254,14 +290,14 @@ async function handleRequest(context) {
     if (guildConfigMatch && req.method === 'POST') {
       const body = await readJsonBody(req);
       const guildId = decodeURIComponent(guildConfigMatch[1]);
-      updateGuildConfig(client, db, guildId, body);
-      sendJson(res, 200, guildDetailPayload(client, db, guildId));
+      updateGuildConfig(clients, db, guildId, body);
+      sendJson(res, 200, guildDetailPayload(clients, db, guildId));
       return;
     }
 
     const guildMatch = pathname.match(/^\/api\/guilds\/([^/]+)$/);
     if (guildMatch && req.method === 'GET') {
-      sendJson(res, 200, guildDetailPayload(client, db, decodeURIComponent(guildMatch[1])));
+      sendJson(res, 200, guildDetailPayload(clients, db, decodeURIComponent(guildMatch[1])));
       return;
     }
 
@@ -275,16 +311,39 @@ async function handleRequest(context) {
   serveStatic(res, staticRoot, pathname, req.method === 'HEAD');
 }
 
+function clientList(clientOrClients) {
+  return (Array.isArray(clientOrClients) ? clientOrClients : [clientOrClients]).filter(Boolean);
+}
+
+function primaryClient(clientOrClients) {
+  const clients = clientList(clientOrClients);
+  return clients.find((client) => client?.isReady?.()) || clients[0] || null;
+}
+
+function botSummaries(clientOrClients) {
+  return clientList(clientOrClients).map((client, index) => ({
+    ...botSummary(client),
+    index
+  }));
+}
+
+function owningClient(clientOrClients, guildId) {
+  return clientList(clientOrClients).find((client) => client.guilds?.cache?.has?.(guildId)) || null;
+}
+
 function overviewPayload(client, db) {
+  const clients = clientList(client);
+  const primary = primaryClient(clients);
   const errors = [];
   const stats = safePayloadSection(errors, 'database stats', { filePath: db.filePath || null, tables: {} }, () => db.databaseStats());
   const guilds = safePayloadSection(errors, 'servers', [], () => (
-    getGuilds(client).map((guild) => safeGuildSummary(guild, db, errors))
+    getGuilds(clients).map((guild) => safeGuildSummary(guild, db, errors))
   ));
   const tables = stats.tables || {};
   return {
     generatedAt: Date.now(),
-    bot: botSummary(client),
+    bot: botSummary(primary),
+    bots: botSummaries(clients),
     runtime: safePayloadSection(errors, 'runtime flags', defaultRuntimeFlags(), () => db.runtimeFlags()),
     guilds,
     totals: {
@@ -308,6 +367,7 @@ function overviewPayload(client, db) {
 function guildDetailPayload(client, db, guildId) {
   const guild = getGuild(client, guildId);
   if (!guild) throw httpError(404, 'Guild not found.');
+  const ownerClient = owningClient(client, guildId) || primaryClient(client);
   const errors = [];
   const config = safePayloadSection(errors, 'server settings', { ...DEFAULT_GUILD_CONFIG }, () => {
     db.ensureGuildConfig(guild.id);
@@ -321,18 +381,18 @@ function guildDetailPayload(client, db, guildId) {
       key,
       label: CONFIG_LABELS[key] || titleize(key),
       value: config[key],
-      display: displayConfigValue(client, guild, key, config[key]),
+      display: displayConfigValue(ownerClient, guild, key, config[key]),
       empty: isEmptyConfigValue(config[key]),
       editable: Object.prototype.hasOwnProperty.call(DEFAULT_GUILD_CONFIG, key),
       type: configInputType(key),
       picker: configPickerType(key),
-      multiple: ROLE_LIST_CONFIG_KEYS.has(key) || USER_LIST_CONFIG_KEYS.has(key),
+      multiple: ROLE_LIST_CONFIG_KEYS.has(key) || USER_LIST_CONFIG_KEYS.has(key) || CHANNEL_LIST_CONFIG_KEYS.has(key),
       critical: CRITICAL_CONFIG_KEYS.includes(key)
     })),
-    options: guildPickerOptions(client, guild),
+    options: guildPickerOptions(ownerClient, guild),
     activeRestrictions: safePayloadSection(errors, 'active restrictions', [], () => db.listActiveRestrictions(guild.id, 20)).map((row) => ({
       userId: row.user_id,
-      userLabel: userLabel(client, guild, row.user_id),
+      userLabel: userLabel(ownerClient, guild, row.user_id),
       restrictedBy: row.restricted_by,
       reason: row.reason,
       source: row.source,
@@ -345,9 +405,9 @@ function guildDetailPayload(client, db, guildId) {
       caseId: row.case_id,
       type: row.type,
       targetId: row.target_id,
-      targetLabel: row.target_id ? userLabel(client, guild, row.target_id) : 'No target',
+      targetLabel: row.target_id ? userLabel(ownerClient, guild, row.target_id) : 'No target',
       moderatorId: row.moderator_id,
-      moderatorLabel: row.moderator_id ? userLabel(client, guild, row.moderator_id) : 'Unknown',
+      moderatorLabel: row.moderator_id ? userLabel(ownerClient, guild, row.moderator_id) : 'Unknown',
       reason: row.reason,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -363,7 +423,7 @@ function guildDetailPayload(client, db, guildId) {
     tickets: safePayloadSection(errors, 'tickets', [], () => db.listTickets(guild.id, null, 20)).map((row) => ({
       panelId: row.panel_id,
       userId: row.user_id,
-      userLabel: userLabel(client, guild, row.user_id),
+      userLabel: userLabel(ownerClient, guild, row.user_id),
       channelId: row.channel_id,
       channelLabel: channelLabel(guild, row.channel_id),
       status: row.status,
@@ -372,7 +432,7 @@ function guildDetailPayload(client, db, guildId) {
     })),
     reminders: safePayloadSection(errors, 'reminders', [], () => db.listReminders(guild.id, 10)).map((row) => ({
       userId: row.user_id,
-      userLabel: userLabel(client, guild, row.user_id),
+      userLabel: userLabel(ownerClient, guild, row.user_id),
       channelLabel: channelLabel(guild, row.channel_id),
       message: row.message,
       dueAt: row.due_at,
@@ -389,7 +449,7 @@ function guildDetailPayload(client, db, guildId) {
     progression: {
       topXp: safePayloadSection(errors, 'XP leaderboard', [], () => db.listProgressLeaderboard(guild.id, 'xp', 5)).map((row) => ({
         userId: row.user_id,
-        userLabel: userLabel(client, guild, row.user_id),
+        userLabel: userLabel(ownerClient, guild, row.user_id),
         level: row.level,
         xp: row.xp,
         balance: row.balance,
@@ -397,7 +457,7 @@ function guildDetailPayload(client, db, guildId) {
       })),
       topBalance: safePayloadSection(errors, 'coin leaderboard', [], () => db.listProgressLeaderboard(guild.id, 'balance', 5)).map((row) => ({
         userId: row.user_id,
-        userLabel: userLabel(client, guild, row.user_id),
+        userLabel: userLabel(ownerClient, guild, row.user_id),
         level: row.level,
         xp: row.xp,
         balance: row.balance,
@@ -486,6 +546,7 @@ function ownerPayload(db, guilds, tables) {
 
 function configInputType(key) {
   if (CHANNEL_CONFIG_KEYS.has(key)) return 'channel';
+  if (CHANNEL_LIST_CONFIG_KEYS.has(key)) return 'channel-list';
   if (ROLE_CONFIG_KEYS.has(key)) return 'role';
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return 'role-list';
   if (USER_LIST_CONFIG_KEYS.has(key)) return 'user-list';
@@ -498,7 +559,7 @@ function configInputType(key) {
 }
 
 function configPickerType(key) {
-  if (CHANNEL_CONFIG_KEYS.has(key)) return key === 'member_count_voice' ? 'voiceChannels' : 'textChannels';
+  if (CHANNEL_CONFIG_KEYS.has(key) || CHANNEL_LIST_CONFIG_KEYS.has(key)) return key === 'member_count_voice' ? 'voiceChannels' : 'textChannels';
   if (ROLE_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key)) return 'roles';
   if (USER_LIST_CONFIG_KEYS.has(key)) return 'users';
   if (key === 'embed_style') return 'styles';
@@ -562,6 +623,123 @@ function channelTypeLabel(type) {
 
 function memberLabel(member) {
   return member?.displayName || member?.user?.tag || member?.id || 'Unknown user';
+}
+
+function colorFromInput(value) {
+  const text = String(value || '').trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(1), 16);
+  if (/^0x[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(2), 16);
+  return null;
+}
+
+function cleanText(value, maxLength) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function cleanUrl(value) {
+  const text = cleanText(value, 2048);
+  return /^https?:\/\//i.test(text) ? text : null;
+}
+
+function normalizeEmbedPayload(db, guildId, body) {
+  const embed = body.embed || {};
+  const fields = Array.isArray(embed.fields)
+    ? embed.fields.slice(0, 25).map((field) => ({
+        name: cleanText(field.name, 256) || 'Field',
+        value: cleanText(field.value, 1024) || 'None',
+        inline: Boolean(field.inline)
+      }))
+    : [];
+
+  return buildEmbed(db, guildId, {
+    title: cleanText(embed.title, 256) || 'Dashboard Embed',
+    description: cleanText(embed.description || body.description, 4000) || 'Sent from the dashboard.',
+    color: colorFromInput(embed.color),
+    thumbnail: cleanUrl(embed.thumbnail),
+    image: cleanUrl(embed.image),
+    author: embed.author?.name ? { name: cleanText(embed.author.name, 256), iconURL: cleanUrl(embed.author.iconUrl) || undefined, url: cleanUrl(embed.author.url) || undefined } : null,
+    footer: embed.footer?.text ? { text: cleanText(embed.footer.text, 2048), iconURL: cleanUrl(embed.footer.iconUrl) || undefined } : null,
+    fields,
+    style: embed.style || undefined
+  });
+}
+
+function buttonStyle(value) {
+  const styles = {
+    primary: ButtonStyle.Primary,
+    secondary: ButtonStyle.Secondary,
+    success: ButtonStyle.Success,
+    danger: ButtonStyle.Danger,
+    link: ButtonStyle.Link
+  };
+  return styles[String(value || '').toLowerCase()] || ButtonStyle.Secondary;
+}
+
+function dashboardComponents(body) {
+  const rows = [];
+  const buttons = Array.isArray(body.buttons) ? body.buttons.slice(0, 25) : [];
+  for (let index = 0; index < buttons.length && rows.length < 5; index += 5) {
+    const row = new ActionRowBuilder();
+    for (const button of buttons.slice(index, index + 5)) {
+      const builder = new ButtonBuilder()
+        .setLabel(cleanText(button.label, 80) || 'Button')
+        .setStyle(button.url ? ButtonStyle.Link : buttonStyle(button.style))
+        .setDisabled(Boolean(button.disabled));
+      if (button.emoji) builder.setEmoji(cleanText(button.emoji, 80));
+      if (button.url) builder.setURL(cleanUrl(button.url) || 'https://discord.com');
+      else builder.setCustomId(cleanText(button.customId, 100) || `dashboard:button:${index}:${row.components.length}`);
+      row.addComponents(builder);
+    }
+    if (row.components.length) rows.push(row);
+  }
+
+  const selects = Array.isArray(body.selects) ? body.selects.slice(0, 5 - rows.length) : [];
+  for (const select of selects) {
+    const options = Array.isArray(select.options) ? select.options.slice(0, 25) : [];
+    if (!options.length) continue;
+    const minValues = Math.max(0, Math.min(Number(select.minValues ?? 1), options.length));
+    const maxValues = Math.max(minValues || 1, Math.min(Number(select.maxValues ?? 1), options.length));
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(cleanText(select.customId, 100) || `dashboard:select:${rows.length}`)
+      .setPlaceholder(cleanText(select.placeholder, 150) || 'Choose an option')
+      .setMinValues(minValues)
+      .setMaxValues(maxValues)
+      .addOptions(options.map((option, optionIndex) => {
+        const item = {
+          label: cleanText(option.label, 100) || `Option ${optionIndex + 1}`,
+          value: cleanText(option.value, 100) || `option-${optionIndex + 1}`,
+          description: cleanText(option.description, 100) || undefined,
+          default: Boolean(option.default)
+        };
+        if (option.emoji) item.emoji = cleanText(option.emoji, 80);
+        return item;
+      }));
+    rows.push(new ActionRowBuilder().addComponents(menu));
+  }
+
+  return rows;
+}
+
+async function sendCustomEmbedFromDashboard(client, db, guildId, body) {
+  const guild = getGuild(client, guildId);
+  if (!guild) throw httpError(404, 'Guild not found.');
+  const channelId = String(body.channelId || '').trim();
+  if (!channelId) throw httpError(400, 'channelId is required.');
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) throw httpError(400, 'Target channel must be text-based.');
+
+  const message = await channel.send({
+    content: cleanText(body.content, 1900) || undefined,
+    embeds: [normalizeEmbedPayload(db, guild.id, body)],
+    components: dashboardComponents(body),
+    allowedMentions: { parse: [], users: [], roles: [] }
+  });
+
+  return {
+    messageId: message.id,
+    channelId: channel.id,
+    url: message.url
+  };
 }
 
 async function sendOwnerBroadcast(client, db, body) {
@@ -685,6 +863,26 @@ async function runGuildAction(client, db, guildId, body) {
     };
   }
 
+  if (action === 'channel-restriction') {
+    const result = await community.applyChannelRestriction(db, guild, db.getConfig(guild.id, 'restriction_exempt_channels', []));
+    return {
+      action,
+      updatedChannels: result.updated,
+      skippedChannels: result.skipped,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'mass-sync-categories') {
+    const result = await community.massSyncCategoryPermissions(guild);
+    return {
+      action,
+      updatedChannels: result.synced,
+      skippedChannels: result.skipped,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
   throw httpError(400, 'Unknown server action.');
 }
 
@@ -729,11 +927,13 @@ function updateRuntimeFlag(client, db, body) {
 
   return {
     runtime: db.runtimeFlags(),
-    bot: botSummary(client)
+    bot: botSummary(primaryClient(client)),
+    bots: botSummaries(client)
   };
 }
 
 async function updatePresence(client, body) {
+  const clients = clientList(client);
   const status = String(body.status || '').trim().toLowerCase();
   const activityType = String(body.activityType || 'playing').trim().toLowerCase();
   const activityText = String(body.activityText || '').trim();
@@ -742,13 +942,17 @@ async function updatePresence(client, body) {
     if (!['online', 'idle', 'dnd', 'invisible'].includes(status)) {
       throw httpError(400, 'Invalid bot status.');
     }
-    await client.user?.setStatus?.(status);
+    for (const bot of clients) {
+      await bot.user?.setStatus?.(status);
+    }
   }
 
   if (activityText) {
-    await client.user?.setActivity?.(activityText.slice(0, 128), {
-      type: ACTIVITY_TYPES[activityType] ?? ActivityType.Playing
-    });
+    for (const bot of clients) {
+      await bot.user?.setActivity?.(activityText.slice(0, 128), {
+        type: ACTIVITY_TYPES[activityType] ?? ActivityType.Playing
+      });
+    }
   }
 }
 
@@ -765,7 +969,7 @@ function updateGuildConfig(client, db, guildId, body) {
 }
 
 function normalizeConfigValue(key, value) {
-  if (USER_LIST_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key)) {
+  if (USER_LIST_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key) || CHANNEL_LIST_CONFIG_KEYS.has(key)) {
     if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
     return String(value || '')
       .split(',')
@@ -816,6 +1020,19 @@ function normalizeConfigValue(key, value) {
 }
 
 function botSummary(client) {
+  if (!client) {
+    return {
+      id: null,
+      tag: 'Discord Bot',
+      avatarUrl: null,
+      status: 'offline',
+      activityType: null,
+      activityText: '',
+      uptimeMs: 0,
+      readyAt: null,
+      ping: null
+    };
+  }
   const user = client.user;
   const activity = user?.presence?.activities?.[0] || null;
   return {
@@ -858,11 +1075,21 @@ function guildSummary(guild, db) {
 }
 
 function getGuilds(client) {
-  return [...(client.guilds?.cache?.values?.() || [])].sort((a, b) => a.name.localeCompare(b.name));
+  const guilds = new Map();
+  for (const bot of clientList(client)) {
+    for (const guild of bot.guilds?.cache?.values?.() || []) {
+      if (!guilds.has(guild.id)) guilds.set(guild.id, guild);
+    }
+  }
+  return [...guilds.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function getGuild(client, guildId) {
-  return client.guilds?.cache?.get?.(guildId) || null;
+  for (const bot of clientList(client)) {
+    const guild = bot.guilds?.cache?.get?.(guildId);
+    if (guild) return guild;
+  }
+  return null;
 }
 
 function collectionSize(collection) {
@@ -872,6 +1099,7 @@ function collectionSize(collection) {
 function displayConfigValue(client, guild, key, value) {
   if (isEmptyConfigValue(value)) return 'Not set';
   if (CHANNEL_CONFIG_KEYS.has(key)) return channelLabel(guild, value);
+  if (CHANNEL_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => channelLabel(guild, id)).join(', ');
   if (ROLE_CONFIG_KEYS.has(key)) return roleLabel(guild, value);
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => roleLabel(guild, id)).join(', ');
   if (USER_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => userLabel(client, guild, id)).join(', ');

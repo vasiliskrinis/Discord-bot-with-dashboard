@@ -10,8 +10,11 @@ This bot implements the pasted spec as a Discord.js project with:
 - Configured admin users/roles and authorized review roles.
 - Roblox/executor update channels using the requested APIs.
 - Embed style switching with saved styles.
-- Multiple ticket panels with one ticket per user per panel and AI help text.
+- Multiple ticket panels with one thread ticket per user per panel.
 - Hugging Face AI on bot mentions, AI embed creator, AI moderation checks, and simple natural-language moderation commands.
+- Multi-token runtime so one process can log in multiple bot tokens and manage their servers from the same dashboard.
+- Verification panels, Q&A channel personality, digital pets, bump cooldowns, channel restriction visibility sync, and category permission mass sync.
+- SWAT prefix system with case files, database queries, episode guessing, points, and season awards.
 - Booster custom roles, counting channel, welcome messages, member count voice channel, games, reminders, giveaways, snipes, sticky messages, AFK, polls, emoji/sticker steal helpers, and voice utilities.
 - SQLite persistence with `node:sqlite` at `data/bot.sqlite`.
 - Per-server database configs, so each guild has its own channels, roles, logs, style, tickets, counting, welcome, update channels, and state.
@@ -28,8 +31,14 @@ This bot implements the pasted spec as a Discord.js project with:
 
    ```env
    DISCORD_TOKEN=your_bot_token
+   # Optional multi-bot forms:
+   # DISCORD_TOKENS=token_two,token_three
+   # DISCORD_TOKEN_1=first_token
+   # DISCORD_TOKEN_2=second_token
    CLIENT_ID=your_application_client_id
    BOT_OWNER_ID=your_discord_user_id
+   SWAT_PREFIX=swat
+   SWAT_GUILD_ID=
    ```
 
 3. Start the bot:
@@ -39,7 +48,7 @@ This bot implements the pasted spec as a Discord.js project with:
    ```
 
 Slash commands are registered separately in every guild the bot is in when `REGISTER_SLASH_ON_READY=true`. No guild ID is needed in `.env`.
-Roblox/executor update channels are configured per server, and the bot sends update messages only when the API data changes after the first saved snapshot.
+Roblox/executor update channels are configured per server. The bot sends an initial snapshot when a watcher is first configured, then sends update messages when the API data changes.
 
 ## Web Dashboard
 
@@ -72,7 +81,7 @@ r!setup
 The setup menu configures:
 
 - Restrict role, restrict permissions role, and update ping role.
-- Restrict trap, advanced logs, restrict logs, restricted users, Roblox updates, executor updates, counting, welcome, and member-count channels.
+- Restrict trap, advanced logs, restrict logs, restricted users, Roblox updates, executor updates, verification, bump, Q&A, counting, welcome, and member-count channels.
 - Admin users, admin roles, and restrict-review authorized roles.
 - Embed style.
 - Welcome message, sticky message, and ticket panels.
@@ -85,6 +94,7 @@ Owner-only controls use the owner prefix from `.env` (`OWNER_PREFIX`, default `o
 Examples:
 
 ```text
+oc help
 oc guilds
 oc leaveguild guild_id
 oc broadcast all message
@@ -121,6 +131,13 @@ r!restrict @user 1d reason
 r!unrestrict @user reason
 r!ban @user reason
 r!help
+r!verification setup #channel @VerifiedRole message
+r!channel-restriction #allowed-channel
+r!mass-sync-categories
+r!qna setup #channel personality text
+r!pet adopt Byte
+r!bump
+swat help
 ```
 
 Owner-only commands use the owner prefix:

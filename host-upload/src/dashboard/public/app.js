@@ -49,6 +49,23 @@ function bindElements() {
     botBans: document.getElementById('botBans'),
     serverHeader: document.getElementById('serverHeader'),
     serverActionBar: document.getElementById('serverActionBar'),
+    embedForm: document.getElementById('embedForm'),
+    embedChannelSelect: document.getElementById('embedChannelSelect'),
+    embedContentInput: document.getElementById('embedContentInput'),
+    embedTitleInput: document.getElementById('embedTitleInput'),
+    embedColorInput: document.getElementById('embedColorInput'),
+    embedDescriptionInput: document.getElementById('embedDescriptionInput'),
+    embedThumbnailInput: document.getElementById('embedThumbnailInput'),
+    embedImageInput: document.getElementById('embedImageInput'),
+    embedAuthorInput: document.getElementById('embedAuthorInput'),
+    embedFooterInput: document.getElementById('embedFooterInput'),
+    embedFieldList: document.getElementById('embedFieldList'),
+    embedButtonList: document.getElementById('embedButtonList'),
+    embedSelectList: document.getElementById('embedSelectList'),
+    addEmbedFieldButton: document.getElementById('addEmbedFieldButton'),
+    addEmbedButtonButton: document.getElementById('addEmbedButtonButton'),
+    addEmbedSelectButton: document.getElementById('addEmbedSelectButton'),
+    embedResult: document.getElementById('embedResult'),
     configForm: document.getElementById('configForm'),
     configKeySelect: document.getElementById('configKeySelect'),
     configValueInput: document.getElementById('configValueInput'),
@@ -143,6 +160,36 @@ function bindEvents() {
 
   els.configKeySelect.addEventListener('change', syncConfigEditor);
   els.configPickerButton.addEventListener('click', openConfigPicker);
+
+  els.embedForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!state.selectedGuildId) return;
+    const payload = buildEmbedPayloadFromForm();
+    const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/embed`, {
+      method: 'POST',
+      body: payload
+    });
+    els.embedResult.innerHTML = response.url ? `<a href="${escapeAttribute(response.url)}" target="_blank" rel="noreferrer">Message sent</a>` : 'Message sent';
+    showToast('Custom embed sent.');
+  });
+
+  els.addEmbedFieldButton.addEventListener('click', () => addEmbedFieldRow());
+  els.addEmbedButtonButton.addEventListener('click', () => addEmbedButtonRow());
+  els.addEmbedSelectButton.addEventListener('click', () => addEmbedSelectRow());
+
+  els.embedForm.addEventListener('click', (event) => {
+    const removeTarget = event.target.closest('[data-builder-remove]');
+    if (removeTarget) {
+      removeTarget.closest('[data-builder-row]')?.remove();
+      return;
+    }
+
+    const addOptionTarget = event.target.closest('[data-add-select-option]');
+    if (addOptionTarget) {
+      const selectRow = addOptionTarget.closest('.embed-select-row');
+      addEmbedSelectOptionRow(selectRow?.querySelector('.embed-select-options'));
+    }
+  });
 
   els.configForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -404,11 +451,213 @@ function renderGuildDetail(detail) {
   `;
 
   renderConfig(detail.config);
+  renderEmbedSender(detail);
   renderServerActions(guild);
   renderRestrictions(detail.activeRestrictions);
   renderCases(detail.recentCases);
   renderTickets(detail.ticketPanels, detail.tickets);
   renderScheduled(detail);
+}
+
+function renderEmbedSender(detail) {
+  const channels = detail.options?.textChannels || [];
+  const previousChannel = els.embedChannelSelect.value;
+  els.embedChannelSelect.innerHTML = channels.map((channel) => `
+    <option value="${escapeAttribute(channel.id)}">${escapeHtml(channel.label)}</option>
+  `).join('');
+  if (channels.some((channel) => channel.id === previousChannel)) {
+    els.embedChannelSelect.value = previousChannel;
+  } else if (channels[0]) {
+    els.embedChannelSelect.value = channels[0].id;
+  }
+
+  if (!els.embedFieldList.children.length) {
+    addEmbedFieldRow({ name: 'Status', value: 'Ready', inline: true });
+    addEmbedFieldRow({ name: 'Priority', value: 'High', inline: true });
+  }
+  if (!els.embedButtonList.children.length) {
+    addEmbedButtonRow({ label: 'Primary', style: 'primary', customId: 'dashboard:primary' });
+  }
+  if (!els.embedSelectList.children.length) {
+    addEmbedSelectRow({
+      placeholder: 'Choose an option',
+      customId: 'dashboard:select',
+      options: [
+        { label: 'Option A', value: 'a', description: 'First option' },
+        { label: 'Option B', value: 'b', description: 'Second option' }
+      ]
+    });
+  }
+}
+
+function addEmbedFieldRow(field = {}) {
+  const row = document.createElement('div');
+  row.className = 'builder-row embed-field-row';
+  row.dataset.builderRow = 'field';
+  row.innerHTML = `
+    <label>
+      Name
+      <input class="embed-field-name" type="text" maxlength="256" value="${escapeAttribute(field.name || '')}">
+    </label>
+    <label class="wide">
+      Value
+      <textarea class="embed-field-value" rows="2" maxlength="1024">${escapeHtml(field.value || '')}</textarea>
+    </label>
+    <label class="check-row">
+      <input class="embed-field-inline" type="checkbox" ${field.inline ? 'checked' : ''}>
+      Inline
+    </label>
+    <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
+  `;
+  els.embedFieldList.appendChild(row);
+}
+
+function addEmbedButtonRow(button = {}) {
+  const row = document.createElement('div');
+  row.className = 'builder-row embed-button-row';
+  row.dataset.builderRow = 'button';
+  row.innerHTML = `
+    <label>
+      Label
+      <input class="embed-button-label" type="text" maxlength="80" value="${escapeAttribute(button.label || 'Button')}">
+    </label>
+    <label>
+      Style
+      <select class="embed-button-style">
+        ${['primary', 'secondary', 'success', 'danger', 'link'].map((style) => `<option value="${style}" ${style === (button.style || 'secondary') ? 'selected' : ''}>${style}</option>`).join('')}
+      </select>
+    </label>
+    <label>
+      Emoji
+      <input class="embed-button-emoji" type="text" maxlength="80" value="${escapeAttribute(button.emoji || '')}">
+    </label>
+    <label>
+      Custom ID
+      <input class="embed-button-custom-id" type="text" maxlength="100" value="${escapeAttribute(button.customId || `dashboard:button:${Date.now()}`)}">
+    </label>
+    <label>
+      Link URL
+      <input class="embed-button-url" type="url" maxlength="2048" value="${escapeAttribute(button.url || '')}">
+    </label>
+    <label class="check-row">
+      <input class="embed-button-disabled" type="checkbox" ${button.disabled ? 'checked' : ''}>
+      Disabled
+    </label>
+    <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
+  `;
+  els.embedButtonList.appendChild(row);
+}
+
+function addEmbedSelectRow(select = {}) {
+  const row = document.createElement('div');
+  row.className = 'builder-row embed-select-row';
+  row.dataset.builderRow = 'select';
+  row.innerHTML = `
+    <label>
+      Placeholder
+      <input class="embed-select-placeholder" type="text" maxlength="150" value="${escapeAttribute(select.placeholder || 'Choose an option')}">
+    </label>
+    <label>
+      Custom ID
+      <input class="embed-select-custom-id" type="text" maxlength="100" value="${escapeAttribute(select.customId || `dashboard:select:${Date.now()}`)}">
+    </label>
+    <label>
+      Min
+      <input class="embed-select-min" type="number" min="0" max="25" value="${Number(select.minValues ?? 1)}">
+    </label>
+    <label>
+      Max
+      <input class="embed-select-max" type="number" min="1" max="25" value="${Number(select.maxValues ?? 1)}">
+    </label>
+    <button class="secondary-button compact" type="button" data-add-select-option>Add Option</button>
+    <button class="secondary-button compact" type="button" data-builder-remove>Remove Menu</button>
+    <div class="embed-select-options builder-list wide"></div>
+  `;
+  els.embedSelectList.appendChild(row);
+  const optionList = row.querySelector('.embed-select-options');
+  const options = select.options?.length ? select.options : [{ label: 'Option A', value: 'a' }];
+  options.forEach((option) => addEmbedSelectOptionRow(optionList, option));
+}
+
+function addEmbedSelectOptionRow(optionList, option = {}) {
+  if (!optionList) return;
+  const row = document.createElement('div');
+  row.className = 'builder-row embed-select-option-row';
+  row.dataset.builderRow = 'select-option';
+  row.innerHTML = `
+    <label>
+      Label
+      <input class="embed-option-label" type="text" maxlength="100" value="${escapeAttribute(option.label || 'Option')}">
+    </label>
+    <label>
+      Value
+      <input class="embed-option-value" type="text" maxlength="100" value="${escapeAttribute(option.value || 'option')}">
+    </label>
+    <label>
+      Description
+      <input class="embed-option-description" type="text" maxlength="100" value="${escapeAttribute(option.description || '')}">
+    </label>
+    <label>
+      Emoji
+      <input class="embed-option-emoji" type="text" maxlength="80" value="${escapeAttribute(option.emoji || '')}">
+    </label>
+    <label class="check-row">
+      <input class="embed-option-default" type="checkbox" ${option.default ? 'checked' : ''}>
+      Default
+    </label>
+    <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
+  `;
+  optionList.appendChild(row);
+}
+
+function buildEmbedPayloadFromForm() {
+  return {
+    channelId: els.embedChannelSelect.value,
+    content: els.embedContentInput.value,
+    embed: {
+      title: els.embedTitleInput.value,
+      description: els.embedDescriptionInput.value,
+      color: els.embedColorInput.value,
+      thumbnail: els.embedThumbnailInput.value,
+      image: els.embedImageInput.value,
+      author: { name: els.embedAuthorInput.value },
+      footer: { text: els.embedFooterInput.value },
+      fields: [...els.embedFieldList.querySelectorAll('.embed-field-row')]
+        .map((row) => ({
+          name: row.querySelector('.embed-field-name').value,
+          value: row.querySelector('.embed-field-value').value,
+          inline: row.querySelector('.embed-field-inline').checked
+        }))
+        .filter((field) => field.name || field.value)
+    },
+    buttons: [...els.embedButtonList.querySelectorAll('.embed-button-row')]
+      .map((row) => ({
+        label: row.querySelector('.embed-button-label').value,
+        style: row.querySelector('.embed-button-style').value,
+        emoji: row.querySelector('.embed-button-emoji').value,
+        customId: row.querySelector('.embed-button-custom-id').value,
+        url: row.querySelector('.embed-button-url').value,
+        disabled: row.querySelector('.embed-button-disabled').checked
+      }))
+      .filter((button) => button.label),
+    selects: [...els.embedSelectList.querySelectorAll('.embed-select-row')]
+      .map((row) => ({
+        placeholder: row.querySelector('.embed-select-placeholder').value,
+        customId: row.querySelector('.embed-select-custom-id').value,
+        minValues: Number(row.querySelector('.embed-select-min').value) || 1,
+        maxValues: Number(row.querySelector('.embed-select-max').value) || 1,
+        options: [...row.querySelectorAll('.embed-select-option-row')]
+          .map((optionRow) => ({
+            label: optionRow.querySelector('.embed-option-label').value,
+            value: optionRow.querySelector('.embed-option-value').value,
+            description: optionRow.querySelector('.embed-option-description').value,
+            emoji: optionRow.querySelector('.embed-option-emoji').value,
+            default: optionRow.querySelector('.embed-option-default').checked
+          }))
+          .filter((option) => option.label && option.value)
+      }))
+      .filter((select) => select.options.length)
+  };
 }
 
 function renderConfig(config) {
@@ -460,6 +709,7 @@ function syncConfigEditor() {
 function typeLabel(type) {
   const labels = {
     channel: 'channel',
+    'channel-list': 'channels',
     role: 'role',
     'role-list': 'roles',
     'user-list': 'users',
@@ -485,6 +735,8 @@ function renderServerActions(guild) {
     <div class="action-group">
       <button class="secondary-button" type="button" data-guild-action="lockdown">Lockdown</button>
       <button class="secondary-button" type="button" data-guild-action="unlockdown">Unlockdown</button>
+      <button class="secondary-button" type="button" data-guild-action="channel-restriction">Apply Restriction Visibility</button>
+      <button class="secondary-button" type="button" data-guild-action="mass-sync-categories">Sync Categories</button>
     </div>
     <div class="danger-group">
       <input id="leaveConfirmInput" type="text" placeholder="${escapeAttribute(guild.id)}">

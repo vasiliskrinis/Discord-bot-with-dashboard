@@ -18,13 +18,15 @@ const {
 const path = require('node:path');
 const env = require('./env');
 const { DEFAULT_GUILD_CONFIG } = require('./db');
-const { buildEmbed, error, success, styleList, EMBED_STYLES } = require('./embeds');
+const { buildEmbed, error, success, EMBED_STYLES } = require('./embeds');
 const { parseDuration, formatDuration } = require('./time');
 const { isBotOwner, requireBotOwner, requireModerator, requireRestrict } = require('./permissions');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
 const games = require('./services/games');
 const progression = require('./services/progression');
+const community = require('./services/community');
+const swat = require('./services/swat');
 const { createEmbedFromAI } = require('./services/ai');
 const { moderationLog } = require('./services/logger');
 
@@ -63,6 +65,24 @@ const SETUP_CHANNELS = [
     key: 'executor_updates_channel',
     label: 'Executor Updates',
     description: 'Executor API update notifications.',
+    types: [ChannelType.GuildText]
+  },
+  {
+    key: 'verification_channel',
+    label: 'Verification Channel',
+    description: 'Channel where the verification panel is posted.',
+    types: [ChannelType.GuildText]
+  },
+  {
+    key: 'bump_channel',
+    label: 'Bump Channel',
+    description: 'Channel for bump messages.',
+    types: [ChannelType.GuildText]
+  },
+  {
+    key: 'qna_channel',
+    label: 'Q&A Channel',
+    description: 'Channel where the Q&A personality answers questions.',
     types: [ChannelType.GuildText]
   },
   {
@@ -106,6 +126,16 @@ const SETUP_SINGLE_ROLES = [
     key: 'update_ping_role',
     label: 'Update Ping Role',
     description: 'Role pinged for Roblox/executor updates.'
+  },
+  {
+    key: 'verified_role',
+    label: 'Verified Role',
+    description: 'Role given when a member verifies.'
+  },
+  {
+    key: 'swat_guess_role',
+    label: 'SWAT Guess Reward',
+    description: 'Role given to first correct episode guesser.'
   },
   {
     key: 'auto_role',
@@ -193,7 +223,10 @@ const PREFIX_ALIASES = {
   levels: 'leaderboard',
   rolelevel: 'role-level',
   rolelvl: 'role-level',
-  setupmenu: 'setup'
+  setupmenu: 'setup',
+  channelrestriction: 'channel-restriction',
+  masssynccategories: 'mass-sync-categories',
+  syncchannels: 'mass-sync-categories'
 };
 
 const OWNER_ALIASES = {
@@ -593,7 +626,58 @@ function slashCommands() {
         sub
           .setName('list')
           .setDescription('List configured level role rewards.')
+      ),
+
+    new SlashCommandBuilder()
+      .setName('verification')
+      .setDescription('Set up or show the verification system.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('setup')
+          .setDescription('Post a verification button panel.')
+          .addChannelOption((option) => option.setName('channel').setDescription('Verification channel.').setRequired(true).addChannelTypes(ChannelType.GuildText))
+          .addRoleOption((option) => option.setName('role').setDescription('Role to give after verification.').setRequired(true))
+          .addStringOption((option) => option.setName('message').setDescription('Panel message.'))
       )
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show verification settings.')),
+
+    new SlashCommandBuilder()
+      .setName('channel-restriction')
+      .setDescription('Apply restricted-role visibility denies to all channels except selected IDs.')
+      .addStringOption((option) => option.setName('except').setDescription('Channel mentions/IDs to leave visible, separated by spaces or commas.')),
+
+    new SlashCommandBuilder()
+      .setName('mass-sync-categories')
+      .setDescription('Sync all child channels with their category permissions.'),
+
+    new SlashCommandBuilder()
+      .setName('bump')
+      .setDescription('Bump the server with the configured cooldown.'),
+
+    new SlashCommandBuilder()
+      .setName('pet')
+      .setDescription('Digital pet ecosystem.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('adopt')
+          .setDescription('Adopt your digital pet.')
+          .addStringOption((option) => option.setName('name').setDescription('Pet name.'))
+      )
+      .addSubcommand((sub) => sub.setName('feed').setDescription('Feed your digital pet.'))
+      .addSubcommand((sub) => sub.setName('play').setDescription('Play with your digital pet.'))
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show your digital pet.')),
+
+    new SlashCommandBuilder()
+      .setName('qna')
+      .setDescription('Configure the Q&A channel personality.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('setup')
+          .setDescription('Set the Q&A channel and personality.')
+          .addChannelOption((option) => option.setName('channel').setDescription('Q&A channel.').setRequired(true).addChannelTypes(ChannelType.GuildText))
+          .addStringOption((option) => option.setName('personality').setDescription('How the bot should answer in Q&A.').setRequired(true))
+      )
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.'))
   ];
 
   return commands.map((command) => command.toJSON());
@@ -1422,7 +1506,7 @@ async function handleSlash(interaction, db, client) {
       }
 
       case 'help': {
-        await reply(interaction, { embeds: [helpEmbed(db, interaction.guild.id)] }, true);
+        await reply(interaction, helpPayload(db, interaction.guild.id), true);
         break;
       }
 
@@ -1495,6 +1579,16 @@ async function handleSlash(interaction, db, client) {
 
       case 'role-level': {
         await handleRoleLevelSlash(interaction, db);
+        break;
+      }
+
+      case 'verification':
+      case 'channel-restriction':
+      case 'mass-sync-categories':
+      case 'bump':
+      case 'pet':
+      case 'qna': {
+        await handleCommunitySlash(interaction, db);
         break;
       }
 
@@ -2113,27 +2207,240 @@ function embedOptionsFromAI(generated) {
   };
 }
 
-function helpEmbed(db, guildId) {
+function channelIdsFromText(text) {
+  return String(text || '')
+    .split(/[,\s]+/)
+    .map(idFromMention)
+    .filter(Boolean);
+}
+
+async function handleCommunitySlash(interaction, db) {
+  const name = interaction.commandName;
+
+  if (name === 'verification') {
+    requireModerator(db, interaction.member);
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'setup') {
+      await community.sendVerificationPanel(db, interaction, {
+        channel: interaction.options.getChannel('channel'),
+        role: interaction.options.getRole('role'),
+        message: interaction.options.getString('message')
+      });
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, 'Verification panel posted and settings saved.')] }, true);
+      return;
+    }
+    await reply(interaction, {
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: 'Verification',
+          description: [
+            `Channel: ${db.getConfig(interaction.guild.id, 'verification_channel') ? `<#${db.getConfig(interaction.guild.id, 'verification_channel')}>` : 'Not set'}`,
+            `Role: ${db.getConfig(interaction.guild.id, 'verified_role') ? `<@&${db.getConfig(interaction.guild.id, 'verified_role')}>` : 'Not set'}`
+          ].join('\n'),
+          style: 'emerald'
+        })
+      ]
+    }, true);
+    return;
+  }
+
+  if (name === 'channel-restriction') {
+    requireModerator(db, interaction.member);
+    await interaction.deferReply({ ephemeral: true });
+    const result = await community.applyChannelRestriction(db, interaction.guild, channelIdsFromText(interaction.options.getString('except')));
+    await interaction.editReply({
+      embeds: [success(db, interaction.guild.id, `Restriction visibility synced. Updated ${result.updated} channels, skipped ${result.skipped}. Exempt: ${result.exempt.length || 0}.`)]
+    });
+    return;
+  }
+
+  if (name === 'mass-sync-categories') {
+    requireModerator(db, interaction.member);
+    await interaction.deferReply({ ephemeral: true });
+    const result = await community.massSyncCategoryPermissions(interaction.guild);
+    await interaction.editReply({
+      embeds: [success(db, interaction.guild.id, `Synced ${result.synced} channels with their categories. Skipped ${result.skipped}.`)]
+    });
+    return;
+  }
+
+  if (name === 'bump') {
+    const result = await community.runBump(db, interaction.guild, interaction.channel, interaction.user);
+    await reply(interaction, {
+      embeds: [
+        result.bumped
+          ? success(db, interaction.guild.id, `Bumped. Next bump <t:${Math.floor(result.nextAt / 1000)}:R>.`)
+          : buildEmbed(db, interaction.guild.id, {
+              title: 'Bump Cooldown',
+              description: `Next bump <t:${Math.floor(result.nextAt / 1000)}:R>.`,
+              style: 'amber'
+            })
+      ]
+    }, true);
+    return;
+  }
+
+  if (name === 'pet') {
+    const sub = interaction.options.getSubcommand();
+    let pet;
+    if (sub === 'adopt') {
+      const result = community.adoptPet(db, interaction.guild.id, interaction.user.id, interaction.options.getString('name'));
+      pet = result.pet;
+      await reply(interaction, {
+        embeds: [
+          buildEmbed(db, interaction.guild.id, {
+            title: result.adopted ? 'Pet Adopted' : 'Pet Already Adopted',
+            description: community.petStatusText(pet),
+            style: 'violet'
+          })
+        ]
+      });
+      return;
+    }
+    if (sub === 'feed') pet = community.feedPet(db, interaction.guild.id, interaction.user.id);
+    else if (sub === 'play') pet = community.playPet(db, interaction.guild.id, interaction.user.id);
+    else pet = community.petStatus(db, interaction.guild.id, interaction.user.id);
+    if (!pet) throw new Error('Adopt a pet first with /pet adopt.');
+    await reply(interaction, {
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: 'Digital Pet',
+          description: community.petStatusText(pet),
+          style: 'violet'
+        })
+      ]
+    });
+    return;
+  }
+
+  if (name === 'qna') {
+    requireModerator(db, interaction.member);
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'setup') {
+      const channel = interaction.options.getChannel('channel');
+      const personality = interaction.options.getString('personality');
+      db.setConfig(interaction.guild.id, 'qna_channel', channel.id);
+      db.setConfig(interaction.guild.id, 'qna_personality', personality.slice(0, 1000));
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Q&A channel set to ${channel}.`)] }, true);
+      return;
+    }
+    await reply(interaction, {
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: 'Q&A',
+          description: [
+            `Channel: ${db.getConfig(interaction.guild.id, 'qna_channel') ? `<#${db.getConfig(interaction.guild.id, 'qna_channel')}>` : 'Not set'}`,
+            `Personality: ${db.getConfig(interaction.guild.id, 'qna_personality') || 'Not set'}`
+          ].join('\n'),
+          style: 'ocean'
+        })
+      ]
+    }, true);
+  }
+}
+
+const HELP_SECTIONS = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    lines: [
+      'Use the dropdown to browse command sections.',
+      `Prefixes: \`${env.defaultPrefix}\`, owner prefix \`${env.ownerPrefix}\`, SWAT prefix \`${env.swatPrefix || 'swat'}\`.`,
+      'Start with `/setup` or `r!setup` for server configuration.'
+    ]
+  },
+  {
+    id: 'moderation',
+    label: 'Moderation',
+    lines: [
+      '`restrict`, `unrestrict`, `ban`, `kick`, `mute`, `unmute`, `warn`, `unwarn`, `warnings`',
+      '`purge`, `slowmode`, `softban`, `mass-ban`, `ban-list`, `case`, `note`',
+      '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`'
+    ]
+  },
+  {
+    id: 'systems',
+    label: 'Server Systems',
+    lines: [
+      '`verification setup #channel @role [message]`, `qna setup #channel personality`',
+      '`bump`, `poll`, `giveaway`, `remind`, `afk`, `snipe`, `first-message`',
+      '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, and Q&A settings.'
+    ]
+  },
+  {
+    id: 'roles',
+    label: 'Roles & Levels',
+    lines: [
+      '`give-role`, `remove-role`, `temp-role`, `temp-role-remove`, `temp-role-list`',
+      '`booster-role`, `role-level`, `daily`, `balance`, `profile`, `level`, `leaderboard`'
+    ]
+  },
+  {
+    id: 'fun',
+    label: 'Fun & Pet',
+    lines: [
+      '`game tictactoe/coinflip/dice/rps/8ball/slots/trivia/roulette/scramble`',
+      '`pet adopt [name]`, `pet feed`, `pet play`, `pet status`',
+      '`swat help` for case files, SWAT database, episode guessing, and season awards.'
+    ]
+  },
+  {
+    id: 'ai',
+    label: 'AI & Embeds',
+    lines: [
+      'Mention the bot for AI, or configure Q&A with `qna setup`.',
+      '`embed-create` builds an embed from a description.',
+      'AI replies are sent with mentions disabled to prevent everyone/here/user/role pings.'
+    ]
+  },
+  {
+    id: 'owner',
+    label: 'Owner',
+    lines: [
+      '`oc help`, `oc guilds`, `oc broadcast`, `oc serversettings`, `oc commandusage`, `oc riskreport`',
+      '`oc panic mode`, `oc panic ai`, `oc lock`, `oc unlock`, `oc maintenance`, `oc db stats`, `oc db backup`',
+      '`oc blacklist user|guild id [reason]`, `oc unblacklist user|guild id`, `oc audit`, `oc restoreuser`, `oc rolefix`'
+    ]
+  }
+];
+
+function helpSection(sectionId) {
+  return HELP_SECTIONS.find((section) => section.id === sectionId) || HELP_SECTIONS[0];
+}
+
+function helpSectionRow(selected = 'overview') {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('help:section')
+      .setPlaceholder('Choose a help section')
+      .addOptions(HELP_SECTIONS.map((section) => ({
+        label: section.label,
+        value: section.id,
+        default: section.id === selected
+      })))
+  );
+}
+
+function helpEmbed(db, guildId, sectionId = 'overview') {
+  const section = helpSection(sectionId);
   return buildEmbed(db, guildId, {
-    title: 'Help',
-    description: [
-      '**Setup:** setup opens the full server setup menu for roles, channels, access, styles, messages, and tickets',
-      '**Restrict:** restrict, unrestrict',
-      '**Moderation:** ban, kick, mute, unmute, unban, warn, unwarn, warnings, purge, slowmode, softban, mass-ban, ban-list',
-      '**Cases:** case show/change/delete, note add/list',
-      '**Utility:** afk, poll, dm, say, ping, lock, unlock, lockdown, unlockdown, userinfo, snipe, first-message, giveaway',
-      '**Roles:** give-role, remove-role, temp-role, temp-role-remove, temp-role-list, booster-role',
-      '**Channel/User Locks:** lock-user, unlock-user, voice-mute',
-      '**Tickets/AI:** mention the bot for AI, embed-create',
-      '**Economy/Levels:** daily, balance, profile, level, leaderboard, role-level',
-      '**Server Assets:** steal-emoji, steal-sticker',
-      '**Server systems:** configured from setup menu',
-      '**Games:** game tictactoe/coinflip/dice/rps/8ball/slots/trivia/roulette/scramble',
-      `**Prefixes:** \`${env.defaultPrefix}\` and owner prefix \`${env.ownerPrefix}\``,
-      `**Embed styles:**\n${styleList()}`
-    ].join('\n'),
+    title: `Help - ${section.label}`,
+    description: section.lines.join('\n'),
     style: 'sapphire'
   });
+}
+
+function helpPayload(db, guildId, sectionId = 'overview') {
+  return {
+    embeds: [helpEmbed(db, guildId, sectionId)],
+    components: [helpSectionRow(sectionId)]
+  };
+}
+
+async function handleHelpInteraction(db, interaction) {
+  const section = interaction.values?.[0] || 'overview';
+  await interaction.update(helpPayload(db, interaction.guild?.id, section));
+  return true;
 }
 
 async function handlePrefixMessage(message, db, client) {
@@ -2143,6 +2450,13 @@ async function handlePrefixMessage(message, db, client) {
     const [commandRaw, ...args] = splitArgs(raw);
     if (!commandRaw) return false;
     await handleOwnerPrefix(message, db, client, commandRaw.toLowerCase(), args);
+    return true;
+  }
+
+  if (env.swatPrefix && matchesPrefix(content, env.swatPrefix)) {
+    if (env.swatGuildId && message.guild?.id !== env.swatGuildId) return false;
+    const raw = content.slice(env.swatPrefix.length).trim();
+    await swat.handleSwatMessage(message, db, raw || 'help');
     return true;
   }
 
@@ -2310,6 +2624,19 @@ async function handleOwnerPrefix(message, db, client, command, args) {
   }
 
   db.recordCommandUsage(command, 'owner-prefix', message.guild?.id || 'dm', message.author.id);
+
+  if (command === 'help') {
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild?.id, {
+          title: 'Owner Help',
+          description: helpSection('owner').lines.join('\n'),
+          style: 'royal'
+        })
+      ]
+    });
+    return;
+  }
 
   if (command === 'uptime') {
     await message.reply({ embeds: [success(db, message.guild?.id, `Uptime: ${formatDuration(Math.floor(process.uptime() * 1000))}.`)] });
@@ -2549,7 +2876,7 @@ async function handleOwnerPrefix(message, db, client, command, args) {
     return;
   }
 
-  throw new Error('Owner command not found. Use guilds, leaveguild, broadcast, serversettings, commandusage, riskreport, panic mode, panic ai, db stats, db backup, restart, shutdown, maintenance, status, activity, lock, unlock, blacklist, unblacklist, audit, restoreuser, rolefix, forceunrestrict.');
+  throw new Error('Owner command not found. Use help, guilds, leaveguild, broadcast, serversettings, commandusage, riskreport, panic mode, panic ai, db stats, db backup, restart, shutdown, maintenance, status, activity, lock, unlock, blacklist, unblacklist, audit, restoreuser, rolefix, forceunrestrict.');
 }
 
 async function handleProgressionPrefix(message, db, client, command, args) {
@@ -2663,7 +2990,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
   assertNormalCommandUnlocked(db, command);
 
   if (command === 'help') {
-    await message.reply({ embeds: [helpEmbed(db, message.guild.id)] });
+    await message.reply(helpPayload(db, message.guild.id));
     return;
   }
   if (command === 'setup') {
@@ -2689,6 +3016,107 @@ async function handlePrefixCommand(message, db, client, command, args) {
   if (command === 'role-level') {
     requireModerator(db, message.member);
     await handleRoleLevelPrefix(message, db, args);
+    return;
+  }
+
+  if (command === 'verification') {
+    requireModerator(db, message.member);
+    const sub = String(args.shift() || 'status').toLowerCase();
+    if (sub === 'setup') {
+      const channelId = idFromMention(args.shift());
+      const roleId = idFromMention(args.shift());
+      const channel = channelId ? await message.guild.channels.fetch(channelId).catch(() => null) : null;
+      const role = roleId ? await message.guild.roles.fetch(roleId).catch(() => null) : null;
+      if (!channel || !role) throw new Error('Usage: r!verification setup #channel @VerifiedRole [message]');
+      await community.sendVerificationPanel(db, message, { channel, role, message: args.join(' ') });
+      await message.reply({ embeds: [success(db, message.guild.id, 'Verification panel posted and settings saved.')] });
+      return;
+    }
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Verification',
+          description: [
+            `Channel: ${db.getConfig(message.guild.id, 'verification_channel') ? `<#${db.getConfig(message.guild.id, 'verification_channel')}>` : 'Not set'}`,
+            `Role: ${db.getConfig(message.guild.id, 'verified_role') ? `<@&${db.getConfig(message.guild.id, 'verified_role')}>` : 'Not set'}`
+          ].join('\n'),
+          style: 'emerald'
+        })
+      ]
+    });
+    return;
+  }
+
+  if (command === 'channel-restriction') {
+    requireModerator(db, message.member);
+    const result = await community.applyChannelRestriction(db, message.guild, channelIdsFromText(args.join(' ')));
+    await message.reply({
+      embeds: [success(db, message.guild.id, `Restriction visibility synced. Updated ${result.updated} channels, skipped ${result.skipped}. Exempt: ${result.exempt.length || 0}.`)]
+    });
+    return;
+  }
+
+  if (command === 'mass-sync-categories') {
+    requireModerator(db, message.member);
+    const result = await community.massSyncCategoryPermissions(message.guild);
+    await message.reply({ embeds: [success(db, message.guild.id, `Synced ${result.synced} channels with their categories. Skipped ${result.skipped}.`)] });
+    return;
+  }
+
+  if (command === 'bump') {
+    const result = await community.runBump(db, message.guild, message.channel, message.author);
+    await message.reply({
+      embeds: [
+        result.bumped
+          ? success(db, message.guild.id, `Bumped. Next bump <t:${Math.floor(result.nextAt / 1000)}:R>.`)
+          : buildEmbed(db, message.guild.id, { title: 'Bump Cooldown', description: `Next bump <t:${Math.floor(result.nextAt / 1000)}:R>.`, style: 'amber' })
+      ]
+    });
+    return;
+  }
+
+  if (command === 'pet') {
+    const sub = String(args.shift() || 'status').toLowerCase();
+    let pet;
+    if (sub === 'adopt') {
+      const result = community.adoptPet(db, message.guild.id, message.author.id, args.join(' '));
+      pet = result.pet;
+      await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: result.adopted ? 'Pet Adopted' : 'Pet Already Adopted', description: community.petStatusText(pet), style: 'violet' })] });
+      return;
+    }
+    if (sub === 'feed') pet = community.feedPet(db, message.guild.id, message.author.id);
+    else if (sub === 'play') pet = community.playPet(db, message.guild.id, message.author.id);
+    else pet = community.petStatus(db, message.guild.id, message.author.id);
+    if (!pet) throw new Error('Adopt a pet first with r!pet adopt [name].');
+    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'Digital Pet', description: community.petStatusText(pet), style: 'violet' })] });
+    return;
+  }
+
+  if (command === 'qna') {
+    requireModerator(db, message.member);
+    const sub = String(args.shift() || 'status').toLowerCase();
+    if (sub === 'setup') {
+      const channelId = idFromMention(args.shift());
+      const channel = channelId ? await message.guild.channels.fetch(channelId).catch(() => null) : null;
+      const personality = args.join(' ').trim();
+      if (!channel || !personality) throw new Error('Usage: r!qna setup #channel personality text');
+      db.setConfig(message.guild.id, 'qna_channel', channel.id);
+      db.setConfig(message.guild.id, 'qna_personality', personality.slice(0, 1000));
+      await message.reply({ embeds: [success(db, message.guild.id, `Q&A channel set to ${channel}.`)] });
+      return;
+    }
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Q&A',
+          description: [
+            `Channel: ${db.getConfig(message.guild.id, 'qna_channel') ? `<#${db.getConfig(message.guild.id, 'qna_channel')}>` : 'Not set'}`,
+            `Personality: ${db.getConfig(message.guild.id, 'qna_personality') || 'Not set'}`
+          ].join('\n'),
+          style: 'ocean'
+        })
+      ]
+    });
     return;
   }
 
@@ -3212,7 +3640,9 @@ module.exports = {
   registerSlashCommands,
   handleSlash,
   handleSetupInteraction,
+  handleHelpInteraction,
   handlePrefixMessage,
   handlePrefixCommand,
-  helpEmbed
+  helpEmbed,
+  helpPayload
 };

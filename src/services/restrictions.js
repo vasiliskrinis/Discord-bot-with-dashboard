@@ -384,14 +384,29 @@ async function reapplyRestrictionOnJoin(db, member) {
   return true;
 }
 
+function clientList(clientOrClients) {
+  return (Array.isArray(clientOrClients) ? clientOrClients : [clientOrClients]).filter(Boolean);
+}
+
+async function findGuildClient(clientOrClients, guildId) {
+  for (const client of clientList(clientOrClients)) {
+    const cached = client.guilds?.cache?.get?.(guildId);
+    if (cached) return { client, guild: cached };
+    const fetched = await client.guilds?.fetch?.(guildId).catch(() => null);
+    if (fetched) return { client, guild: fetched };
+  }
+  return null;
+}
+
 async function expireDueRestrictions(db, client) {
   const due = db.dueRestrictions();
   for (const restriction of due) {
-    const guild = await client.guilds.fetch(restriction.guild_id).catch(() => null);
-    if (!guild) continue;
+    const found = await findGuildClient(client, restriction.guild_id);
+    if (!found) continue;
+    const { guild } = found;
     const member = await guild.members.fetch(restriction.user_id).catch(() => null);
     if (!member) continue;
-    await unrestrictMember(db, guild, member, client.user, 'Temporary restriction expired').catch(() => null);
+    await unrestrictMember(db, guild, member, found.client.user, 'Temporary restriction expired').catch(() => null);
   }
 }
 

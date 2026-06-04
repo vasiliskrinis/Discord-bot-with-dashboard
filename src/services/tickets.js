@@ -6,7 +6,6 @@ const {
   PermissionsBitField
 } = require('discord.js');
 const { buildEmbed, error, success, warning } = require('../embeds');
-const { askAI } = require('./ai');
 
 function panelIdFromName(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || `panel-${Date.now()}`;
@@ -103,13 +102,15 @@ async function openTicket(db, interaction, panelId) {
     });
   }
 
-  const channel = await interaction.guild.channels.create({
-    name: `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90),
-    type: ChannelType.GuildText,
-    parent: panel.category_id || undefined,
-    topic: `Ticket ${panelId} for ${interaction.user.id}`,
-    permissionOverwrites: overwrites
-  });
+  const ticketName = `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90);
+  const channel = await createTicketThread(interaction, panel, ticketName).catch(() => null) ||
+    await interaction.guild.channels.create({
+      name: ticketName,
+      type: ChannelType.GuildText,
+      parent: panel.category_id || undefined,
+      topic: `Ticket ${panelId} for ${interaction.user.id}`,
+      permissionOverwrites: overwrites
+    });
 
   db.saveTicket(interaction.guild.id, panelId, interaction.user.id, channel.id);
 
@@ -124,16 +125,17 @@ async function openTicket(db, interaction, panelId) {
       .setStyle(ButtonStyle.Danger)
   );
 
-  const runtimeFlags = db.runtimeFlags();
-  const aiHelp = runtimeFlags.aiLocked || runtimeFlags.botLocked
-    ? 'AI helper is currently locked by the bot owner.'
-    : await askAI(`A user opened a Discord support ticket named "${panel.name}". Give a short first helpful checklist.`);
   await channel.send({
     content: `${interaction.user}${panel.support_role_id ? ` <@&${panel.support_role_id}>` : ''}`,
+    allowedMentions: {
+      users: [interaction.user.id],
+      roles: panel.support_role_id ? [panel.support_role_id] : [],
+      parse: []
+    },
     embeds: [
       buildEmbed(db, interaction.guild.id, {
         title: panel.name,
-        description: `${panel.description || 'Support will be with you soon.'}\n\nAI helper:\n${aiHelp}`.slice(0, 4000),
+        description: panel.description || 'Support will be with you soon.',
         style: 'ocean'
       })
     ],
@@ -143,6 +145,19 @@ async function openTicket(db, interaction, panelId) {
   await interaction.reply({ embeds: [success(db, interaction.guild.id, `Ticket opened: ${channel}`)], ephemeral: true });
 }
 
+async function createTicketThread(interaction, panel, ticketName) {
+  if (!interaction.channel?.threads?.create) return null;
+  const thread = await interaction.channel.threads.create({
+    name: ticketName,
+    type: ChannelType.PublicThread,
+    autoArchiveDuration: 10080,
+    reason: `Ticket ${panel.panel_id} for ${interaction.user.tag}`
+  });
+  await thread.members.add(interaction.user.id).catch(() => null);
+  await thread.join?.().catch(() => null);
+  return thread;
+}
+
 async function closeTicket(db, interaction) {
   const ticket = db.getTicketByChannel(interaction.guild.id, interaction.channel.id);
   if (!ticket) {
@@ -150,8 +165,12 @@ async function closeTicket(db, interaction) {
     return;
   }
   db.closeTicket(interaction.guild.id, interaction.channel.id);
-  await interaction.channel.permissionOverwrites.edit(ticket.user_id, { SendMessages: false }).catch(() => null);
   await interaction.reply({ embeds: [success(db, interaction.guild.id, 'Ticket closed.')] });
+  if (interaction.channel.isThread?.()) {
+    await interaction.channel.setArchived(true, 'Ticket closed').catch(() => null);
+  } else {
+    await interaction.channel.permissionOverwrites.edit(ticket.user_id, { SendMessages: false }).catch(() => null);
+  }
 }
 
 module.exports = {

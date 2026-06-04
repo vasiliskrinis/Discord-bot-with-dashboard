@@ -123,6 +123,77 @@
           <div id="serverHeader" class="server-header"></div>
           <div id="serverActionBar" class="action-bar"></div>
 
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Custom Embed Sender</h2>
+              <span id="embedResult" class="muted"></span>
+            </div>
+            <form id="embedForm" class="embed-builder">
+              <label>
+                Channel
+                <select id="embedChannelSelect"></select>
+              </label>
+              <label class="wide">
+                Message Content
+                <textarea id="embedContentInput" rows="2" maxlength="1900"></textarea>
+              </label>
+              <label>
+                Title
+                <input id="embedTitleInput" type="text" maxlength="256" value="Mission Briefing">
+              </label>
+              <label>
+                Color
+                <input id="embedColorInput" type="color" value="#5865f2">
+              </label>
+              <label class="wide">
+                Description
+                <textarea id="embedDescriptionInput" rows="5" maxlength="4000">Customize this embed from the dashboard.</textarea>
+              </label>
+              <label>
+                Thumbnail URL
+                <input id="embedThumbnailInput" type="url" maxlength="2048">
+              </label>
+              <label>
+                Image URL
+                <input id="embedImageInput" type="url" maxlength="2048">
+              </label>
+              <label>
+                Author
+                <input id="embedAuthorInput" type="text" maxlength="256">
+              </label>
+              <label>
+                Footer
+                <input id="embedFooterInput" type="text" maxlength="2048" value="Sent from Bot Dashboard">
+              </label>
+
+              <div class="builder-section wide">
+                <div class="builder-head">
+                  <h3>Fields</h3>
+                  <button id="addEmbedFieldButton" class="secondary-button compact" type="button">Add Field</button>
+                </div>
+                <div id="embedFieldList" class="builder-list"></div>
+              </div>
+
+              <div class="builder-section wide">
+                <div class="builder-head">
+                  <h3>Buttons</h3>
+                  <button id="addEmbedButtonButton" class="secondary-button compact" type="button">Add Button</button>
+                </div>
+                <div id="embedButtonList" class="builder-list"></div>
+              </div>
+
+              <div class="builder-section wide">
+                <div class="builder-head">
+                  <h3>Dropdown Menus</h3>
+                  <button id="addEmbedSelectButton" class="secondary-button compact" type="button">Add Menu</button>
+                </div>
+                <div id="embedSelectList" class="builder-list"></div>
+              </div>
+
+              <button type="submit">Send Embed</button>
+            </form>
+          </section>
+
           <div class="content-grid">
             <section class="panel">
               <div class="panel-head">

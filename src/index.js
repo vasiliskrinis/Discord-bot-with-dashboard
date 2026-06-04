@@ -14,6 +14,7 @@ const { isBotOwner, isGuildModerator } = require('./permissions');
 const ai = require('./services/ai');
 const prompts = require('./services/prompts');
 const progression = require('./services/progression');
+const community = require('./services/community');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
 const { advancedLog, systemLog } = require('./services/logger');
@@ -21,231 +22,251 @@ const watchers = require('./services/watchers');
 const { startDashboard } = require('./dashboard/server');
 
 const db = new BotDatabase(env.databasePath);
+const clients = [];
+let dashboardServer = null;
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildModeration,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildEmojisAndStickers,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
-  ],
-  partials: [Partials.Channel, Partials.Message, Partials.Reaction]
-});
+function createDiscordClient() {
+  return new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildModeration,
+      GatewayIntentBits.GuildVoiceStates,
+      GatewayIntentBits.GuildEmojisAndStickers,
+      GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction]
+  });
+}
 
-client.once(Events.ClientReady, async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+function attachClientEvents(client, botIndex) {
+  const label = `bot ${botIndex + 1}`;
 
-  if (env.enableSlashCommands && env.registerSlashOnReady) {
-    try {
-      const result = await commands.registerSlashCommands(client);
-      console.log(result);
-    } catch (err) {
-      console.error('Failed to register slash commands:', err);
+  client.once(Events.ClientReady, async () => {
+    console.log(`Logged in as ${client.user.tag} (${label})`);
+
+    if (env.enableSlashCommands && env.registerSlashOnReady) {
+      try {
+        const result = await commands.registerSlashCommands(client);
+        console.log(`${client.user.tag}: ${result}`);
+      } catch (err) {
+        console.error(`Failed to register slash commands for ${client.user?.tag || label}:`, err);
+      }
     }
-  }
 
-  watchers.startWatchers(client, db, restrictions);
-  startDashboard({ client, db });
-  for (const guild of client.guilds.cache.values()) {
+    if (!dashboardServer) {
+      dashboardServer = startDashboard({ client, clients, db });
+    }
+
+    for (const guild of client.guilds.cache.values()) {
+      db.ensureGuildConfig(guild.id);
+      watchers.updateMemberCountChannel(db, guild).catch(() => null);
+    }
+  });
+
+  client.on(Events.GuildCreate, async (guild) => {
+    if (db.isBotBanned('guild', guild.id)) {
+      await guild.leave().catch(() => null);
+      return;
+    }
+
     db.ensureGuildConfig(guild.id);
-    watchers.updateMemberCountChannel(db, guild).catch(() => null);
-  }
-});
 
-client.on(Events.GuildCreate, async (guild) => {
-  if (db.isBotBanned('guild', guild.id)) {
-    await guild.leave().catch(() => null);
-    return;
-  }
-
-  db.ensureGuildConfig(guild.id);
-
-  if (env.enableSlashCommands && env.registerSlashOnReady) {
-    await guild.commands.set(commands.slashCommands()).catch(() => null);
-  }
-});
-
-client.on(Events.GuildMemberAdd, async (member) => {
-  if (await handleBotAddGuard(member).catch(() => false)) return;
-  const reRestricted = await restrictions.reapplyRestrictionOnJoin(db, member).catch(() => false);
-  if (!reRestricted) await handleAutoRole(member).catch(() => null);
-  await handleAntiRaid(member).catch(() => null);
-  await sendWelcome(member).catch(() => null);
-  await watchers.updateMemberCountChannel(db, member.guild).catch(() => null);
-  await advancedLog(db, member.guild, {
-    title: 'Member Joined',
-    fields: [
-      { name: 'Member', value: `${member.user} (${member.id})`, inline: true },
-      { name: 'Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true }
-    ],
-    style: 'emerald'
-  }).catch(() => null);
-});
-
-client.on(Events.GuildMemberRemove, async (member) => {
-  await watchers.updateMemberCountChannel(db, member.guild).catch(() => null);
-  await advancedLog(db, member.guild, {
-    title: 'Member Left',
-    fields: [{ name: 'Member', value: `${member.user} (${member.id})`, inline: true }],
-    style: 'amber'
-  }).catch(() => null);
-});
-
-client.on(Events.MessageDelete, async (message) => {
-  if (!message.guild || message.author?.bot) return;
-  const attachment = message.attachments?.first()?.url || null;
-  db.setSnipe(message.guild.id, message.channel.id, message.author?.id, message.content, attachment);
-  await advancedLog(db, message.guild, {
-    title: 'Message Deleted',
-    fields: [
-      { name: 'Author', value: message.author ? `${message.author} (${message.author.id})` : 'Unknown', inline: true },
-      { name: 'Channel', value: `${message.channel}`, inline: true },
-      { name: 'Content', value: message.content || attachment || 'No content' }
-    ],
-    style: 'amber'
-  }).catch(() => null);
-});
-
-client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
-  if (!newMessage.guild || newMessage.author?.bot) return;
-  if (oldMessage.content === newMessage.content) return;
-  await advancedLog(db, newMessage.guild, {
-    title: 'Message Edited',
-    fields: [
-      { name: 'Author', value: `${newMessage.author} (${newMessage.author.id})`, inline: true },
-      { name: 'Channel', value: `${newMessage.channel}`, inline: true },
-      { name: 'Before', value: oldMessage.content || 'Unknown' },
-      { name: 'After', value: newMessage.content || 'Unknown' }
-    ],
-    style: 'sapphire'
-  }).catch(() => null);
-});
-
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
-  const ownerBypass = isBotOwner(message.author.id);
-  if ((db.isBotBanned('guild', message.guild.id) || db.isBotBanned('member', message.author.id)) && !ownerBypass) return;
-  const runtimeFlags = db.runtimeFlags();
-  if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) return;
-
-  try {
-    await handleAfk(message);
-
-    const aiModerationEnabled = env.aiModeration &&
-      configBool(message.guild.id, 'ai_moderation_enabled', true);
-    const moderation = runtimeFlags.aiLocked || runtimeFlags.botLocked || !aiModerationEnabled || ownerBypass
-      ? { blocked: false }
-      : ai.moderateText(message.content);
-    if (moderation.blocked && !isGuildModerator(db, message.member)) {
-      await message.delete().catch(() => null);
-      await systemLog(db, message.guild, 'ai', {
-        title: 'AI Moderation',
-        actor: message.author,
-        fields: [
-          { name: 'Member', value: `${message.author} (${message.author.id})`, inline: true },
-          { name: 'Channel', value: `${message.channel}`, inline: true },
-          { name: 'Reason', value: moderation.reason },
-          { name: 'Content', value: message.content.slice(0, 1000) || 'No content' }
-        ],
-        style: 'ruby'
-      }).catch(() => null);
-      return;
+    if (env.enableSlashCommands && env.registerSlashOnReady) {
+      await guild.commands.set(commands.slashCommands()).catch(() => null);
     }
+  });
 
-    if (await handleRestrictChannelMessage(message)) return;
-    if (await handleCountingMessage(message)) return;
+  client.on(Events.GuildMemberAdd, async (member) => {
+    if (await handleBotAddGuard(member, client).catch(() => false)) return;
+    const reRestricted = await restrictions.reapplyRestrictionOnJoin(db, member).catch(() => false);
+    if (!reRestricted) await handleAutoRole(member).catch(() => null);
+    await handleAntiRaid(member, client).catch(() => null);
+    await sendWelcome(member).catch(() => null);
+    await watchers.updateMemberCountChannel(db, member.guild).catch(() => null);
+    await advancedLog(db, member.guild, {
+      title: 'Member Joined',
+      fields: [
+        { name: 'Member', value: `${member.user} (${member.id})`, inline: true },
+        { name: 'Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true }
+      ],
+      style: 'emerald'
+    }).catch(() => null);
+  });
 
-    const handledPrefix = await commands.handlePrefixMessage(message, db, client);
-    if (handledPrefix) return;
+  client.on(Events.GuildMemberRemove, async (member) => {
+    await watchers.updateMemberCountChannel(db, member.guild).catch(() => null);
+    await advancedLog(db, member.guild, {
+      title: 'Member Left',
+      fields: [{ name: 'Member', value: `${member.user} (${member.id})`, inline: true }],
+      style: 'amber'
+    }).catch(() => null);
+  });
 
-    await progression.awardMessageActivity(db, message).catch(() => null);
-    await handleSticky(message);
+  client.on(Events.MessageDelete, async (message) => {
+    if (!message.guild || message.author?.bot) return;
+    const attachment = message.attachments?.first()?.url || null;
+    db.setSnipe(message.guild.id, message.channel.id, message.author?.id, message.content, attachment);
+    await advancedLog(db, message.guild, {
+      title: 'Message Deleted',
+      fields: [
+        { name: 'Author', value: message.author ? `${message.author} (${message.author.id})` : 'Unknown', inline: true },
+        { name: 'Channel', value: `${message.channel}`, inline: true },
+        { name: 'Content', value: message.content || attachment || 'No content' }
+      ],
+      style: 'amber'
+    }).catch(() => null);
+  });
 
-    if (message.mentions.has(client.user)) {
-      await handleAiMention(message);
-    }
-  } catch (err) {
-    await message.reply({ embeds: [error(db, message.guild.id, err.message || 'Message handling failed.')] }).catch(() => null);
-  }
-});
+  client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+    if (!newMessage.guild || newMessage.author?.bot) return;
+    if (oldMessage.content === newMessage.content) return;
+    await advancedLog(db, newMessage.guild, {
+      title: 'Message Edited',
+      fields: [
+        { name: 'Author', value: `${newMessage.author} (${newMessage.author.id})`, inline: true },
+        { name: 'Channel', value: `${newMessage.channel}`, inline: true },
+        { name: 'Before', value: oldMessage.content || 'Unknown' },
+        { name: 'After', value: newMessage.content || 'Unknown' }
+      ],
+      style: 'sapphire'
+    }).catch(() => null);
+  });
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  try {
+  client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot) return;
+    if (!message.guild) return;
+    const ownerBypass = isBotOwner(message.author.id);
+    if ((db.isBotBanned('guild', message.guild.id) || db.isBotBanned('member', message.author.id)) && !ownerBypass) return;
     const runtimeFlags = db.runtimeFlags();
-    const ownerBypass = isBotOwner(interaction.user?.id);
-    if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) {
-      const payload = { embeds: [warning(db, interaction.guild?.id, 'The bot is in maintenance/panic mode. Try again later.')], ephemeral: true };
-      if (interaction.isRepliable()) await interaction.reply(payload).catch(() => null);
-      return;
-    }
+    if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) return;
 
-    if (interaction.isChatInputCommand()) {
-      if (!env.enableSlashCommands) {
-        await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Slash commands are disabled in .env.')], ephemeral: true });
-        return;
-      }
-      if (interaction.guild && db.isBotBanned('guild', interaction.guild.id) && !ownerBypass) return;
-      if (db.isBotBanned('member', interaction.user.id) && !ownerBypass) return;
-      await commands.handleSlash(interaction, db, client);
-      return;
-    }
+    try {
+      await handleAfk(message);
 
-    if (interaction.isButton()) {
-      if (interaction.customId.startsWith('setup:')) {
-        await commands.handleSetupInteraction(db, interaction);
+      const aiModerationEnabled = env.aiModeration &&
+        configBool(message.guild.id, 'ai_moderation_enabled', true);
+      const moderation = runtimeFlags.aiLocked || runtimeFlags.botLocked || !aiModerationEnabled || ownerBypass
+        ? { blocked: false }
+        : ai.moderateText(message.content);
+      if (moderation.blocked && !isGuildModerator(db, message.member)) {
+        await message.delete().catch(() => null);
+        await systemLog(db, message.guild, 'ai', {
+          title: 'AI Moderation',
+          actor: message.author,
+          fields: [
+            { name: 'Member', value: `${message.author} (${message.author.id})`, inline: true },
+            { name: 'Channel', value: `${message.channel}`, inline: true },
+            { name: 'Reason', value: moderation.reason },
+            { name: 'Content', value: message.content.slice(0, 1000) || 'No content' }
+          ],
+          style: 'ruby'
+        }).catch(() => null);
         return;
       }
-      if (interaction.customId.startsWith('restrict:')) {
-        await restrictions.handleRestrictButton(db, interaction);
+
+      if (await handleRestrictChannelMessage(message, client)) return;
+      if (await handleCountingMessage(message)) return;
+
+      const handledPrefix = await commands.handlePrefixMessage(message, db, client);
+      if (handledPrefix) return;
+
+      await progression.awardMessageActivity(db, message).catch(() => null);
+      await handleSticky(message);
+      if (await handleQnaMessage(message, client)) return;
+
+      if (message.mentions.has(client.user)) {
+        await handleAiMention(message, client);
+      }
+    } catch (err) {
+      await message.reply({ embeds: [error(db, message.guild.id, err.message || 'Message handling failed.')] }).catch(() => null);
+    }
+  });
+
+  client.on(Events.InteractionCreate, async (interaction) => {
+    try {
+      const runtimeFlags = db.runtimeFlags();
+      const ownerBypass = isBotOwner(interaction.user?.id);
+      if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) {
+        const payload = { embeds: [warning(db, interaction.guild?.id, 'The bot is in maintenance/panic mode. Try again later.')], ephemeral: true };
+        if (interaction.isRepliable()) await interaction.reply(payload).catch(() => null);
         return;
       }
-      if (interaction.customId.startsWith('review:')) {
-        await restrictions.handleReviewButton(db, interaction);
-        return;
-      }
-      if (interaction.customId.startsWith('ticket:')) {
-        if (runtimeFlags.botLocked) {
-          await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Tickets are disabled by bot lock.')], ephemeral: true });
+
+      if (interaction.isChatInputCommand()) {
+        if (!env.enableSlashCommands) {
+          await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Slash commands are disabled in .env.')], ephemeral: true });
           return;
         }
-        await tickets.handleTicketButton(db, interaction);
+        if (interaction.guild && db.isBotBanned('guild', interaction.guild.id) && !ownerBypass) return;
+        if (db.isBotBanned('member', interaction.user.id) && !ownerBypass) return;
+        await commands.handleSlash(interaction, db, client);
         return;
       }
-    }
 
-    if (
-      (interaction.isStringSelectMenu() ||
-        interaction.isChannelSelectMenu() ||
-        interaction.isRoleSelectMenu() ||
-        interaction.isUserSelectMenu()) &&
+      if (interaction.isButton()) {
+        if (interaction.customId.startsWith('setup:')) {
+          await commands.handleSetupInteraction(db, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith('restrict:')) {
+          await restrictions.handleRestrictButton(db, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith('review:')) {
+          await restrictions.handleReviewButton(db, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith('verify:')) {
+          await community.handleVerifyButton(db, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith('ticket:')) {
+          if (runtimeFlags.botLocked) {
+            await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Tickets are disabled by bot lock.')], ephemeral: true });
+            return;
+          }
+          await tickets.handleTicketButton(db, interaction);
+          return;
+        }
+      }
+
+      if (
+        (interaction.isStringSelectMenu() ||
+          interaction.isChannelSelectMenu() ||
+          interaction.isRoleSelectMenu() ||
+          interaction.isUserSelectMenu()) &&
       interaction.customId.startsWith('setup:')
     ) {
       await commands.handleSetupInteraction(db, interaction);
       return;
     }
 
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('restrict-modal:')) {
-      await restrictions.handleRestrictModal(db, interaction);
-      return;
-    }
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith('help:')) {
+        await commands.handleHelpInteraction(db, interaction);
+        return;
+      }
 
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('setup:modal:')) {
-      await commands.handleSetupInteraction(db, interaction);
-    }
-  } catch (err) {
-    const payload = { embeds: [error(db, interaction.guild?.id, err.message || 'Interaction failed.')], ephemeral: true };
-    if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => null);
-    else await interaction.reply(payload).catch(() => null);
-  }
-});
+      if (interaction.isModalSubmit() && interaction.customId.startsWith('restrict-modal:')) {
+        await restrictions.handleRestrictModal(db, interaction);
+        return;
+      }
 
-async function handleRestrictChannelMessage(message) {
+      if (interaction.isModalSubmit() && interaction.customId.startsWith('setup:modal:')) {
+        await commands.handleSetupInteraction(db, interaction);
+      }
+    } catch (err) {
+      const payload = { embeds: [error(db, interaction.guild?.id, err.message || 'Interaction failed.')], ephemeral: true };
+      if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => null);
+      else await interaction.reply(payload).catch(() => null);
+    }
+  });
+}
+
+async function handleRestrictChannelMessage(message, client) {
   const restrictChannel = db.getConfig(message.guild.id, 'restrict_channel');
   if (!restrictChannel || message.channel.id !== restrictChannel) return false;
   if (isBotOwner(message.author.id)) return false;
@@ -357,7 +378,7 @@ async function handleAfk(message) {
   }
 }
 
-async function handleAiMention(message) {
+async function handleAiMention(message, client) {
   const runtimeFlags = db.runtimeFlags();
   if (runtimeFlags.aiLocked || runtimeFlags.botLocked || runtimeFlags.panicMode || runtimeFlags.maintenance) {
     await message.reply({ embeds: [warning(db, message.guild.id, 'AI features are locked by the bot owner.')] }).catch(() => null);
@@ -397,7 +418,10 @@ async function handleAiMention(message) {
       channel: message.channel
     })
   });
-  await message.reply(answer.slice(0, 2000)).catch(() => null);
+  await message.reply({
+    content: answer.slice(0, 2000),
+    allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
+  }).catch(() => null);
   await systemLog(db, message.guild, 'ai', {
     title: 'AI Reply',
     actor: message.author,
@@ -407,6 +431,40 @@ async function handleAiMention(message) {
       { name: 'Answer', value: answer.slice(0, 1000) }
     ]
   }).catch(() => null);
+}
+
+async function handleQnaMessage(message, client) {
+  const channelId = db.getConfig(message.guild.id, 'qna_channel');
+  if (!channelId || message.channel.id !== channelId) return false;
+  if (message.mentions.has(client.user)) return false;
+  if (!message.content.trim()) return false;
+
+  const runtimeFlags = db.runtimeFlags();
+  if (runtimeFlags.aiLocked || runtimeFlags.botLocked || runtimeFlags.panicMode || runtimeFlags.maintenance) return false;
+
+  await message.channel.sendTyping().catch(() => null);
+  const answer = await ai.askAI(message.content.slice(0, 1800), {
+    personality: db.getConfig(message.guild.id, 'qna_personality', env.aiPersonality),
+    promptStack: prompts.buildPromptStack(db, {
+      guild: message.guild,
+      channel: message.channel
+    }),
+    systemSuffix: 'Answer as the configured Q&A helper for this server. Be accurate and concise. Do not mention everyone, here, users, or roles.'
+  });
+  await message.reply({
+    content: answer.slice(0, 2000),
+    allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
+  }).catch(() => null);
+  await systemLog(db, message.guild, 'ai', {
+    title: 'Q&A Reply',
+    actor: message.author,
+    fields: [
+      { name: 'Channel', value: `${message.channel}`, inline: true },
+      { name: 'Question', value: message.content.slice(0, 1000) },
+      { name: 'Answer', value: answer.slice(0, 1000) }
+    ]
+  }).catch(() => null);
+  return true;
 }
 
 async function referencedMember(message) {
@@ -442,7 +500,7 @@ async function handleAutoRole(member) {
   await member.roles.add(role, 'Configured auto role').catch(() => null);
 }
 
-async function handleAntiRaid(member) {
+async function handleAntiRaid(member, client) {
   if (member.user.bot || isBotOwner(member.id)) return;
   if (!configBool(member.guild.id, 'anti_raid_enabled', true)) return;
 
@@ -485,7 +543,7 @@ async function handleAntiRaid(member) {
   }).catch(() => null);
 }
 
-async function handleBotAddGuard(member) {
+async function handleBotAddGuard(member, client) {
   if (!member.user.bot || member.id === client.user.id) return false;
   if (!configBool(member.guild.id, 'bot_add_guard_enabled', true)) return false;
 
@@ -562,9 +620,18 @@ async function sendWelcome(member) {
   });
 }
 
-if (!env.token) {
-  console.error('DISCORD_TOKEN is missing. Add it to .env before starting the bot.');
+if (!env.tokens.length) {
+  console.error('No Discord bot tokens found. Add DISCORD_TOKEN, DISCORD_TOKENS, or DISCORD_TOKEN_1/DISCORD_TOKEN_2 to .env before starting the bot.');
   process.exit(1);
 }
 
-client.login(env.token);
+for (const [index, token] of env.tokens.entries()) {
+  const client = createDiscordClient();
+  clients.push(client);
+  attachClientEvents(client, index);
+  client.login(token).catch((err) => {
+    console.error(`Failed to login bot ${index + 1}:`, err);
+  });
+}
+
+watchers.startWatchers(clients, db, restrictions);

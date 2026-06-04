@@ -44,16 +44,35 @@ function list(value) {
     .filter(Boolean);
 }
 
+function uniqueList(values) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function botTokens() {
+  const numberedKeys = Object.keys(process.env)
+    .filter((key) => /^DISCORD_TOKEN_\d+$/.test(key))
+    .sort((left, right) => Number(left.match(/\d+$/)[0]) - Number(right.match(/\d+$/)[0]));
+
+  return uniqueList([
+    process.env.DISCORD_TOKEN,
+    ...list(process.env.DISCORD_TOKENS),
+    ...numberedKeys.map((key) => process.env[key])
+  ]);
+}
+
 loadDotEnv();
 
 module.exports = {
   token: process.env.DISCORD_TOKEN || '',
+  tokens: botTokens(),
   clientId: process.env.CLIENT_ID || '',
   botOwnerId: process.env.BOT_OWNER_ID || '',
   enableSlashCommands: bool(process.env.ENABLE_SLASH_COMMANDS, true),
   enablePrefixCommands: bool(process.env.ENABLE_PREFIX_COMMANDS, true),
   defaultPrefix: process.env.DEFAULT_PREFIX || 'r!',
   ownerPrefix: process.env.OWNER_PREFIX || 'oc',
+  swatPrefix: process.env.SWAT_PREFIX || 'swat',
+  swatGuildId: process.env.SWAT_GUILD_ID || '',
   hfApiKey: process.env.HUGGING_FACE_API_KEY || '',
   hfModel: process.env.HF_MODEL || 'Qwen/Qwen2.5-7B-Instruct:fastest',
   aiTimeoutMs: int(process.env.AI_TIMEOUT_MS, 12000),
