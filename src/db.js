@@ -186,6 +186,16 @@ class BotDatabase {
         description TEXT,
         category_id TEXT,
         support_role_id TEXT,
+        mode TEXT NOT NULL DEFAULT 'thread',
+        panel_content TEXT,
+        button_label TEXT,
+        button_style TEXT,
+        button_emoji TEXT,
+        open_message TEXT,
+        close_button_label TEXT,
+        delete_button_label TEXT,
+        panel_channel_id TEXT,
+        panel_message_id TEXT,
         created_by TEXT,
         created_at INTEGER NOT NULL,
         PRIMARY KEY (guild_id, panel_id)
@@ -291,7 +301,23 @@ class BotDatabase {
         PRIMARY KEY (guild_id, user_id, key)
       );
     `);
+    this.ensureColumn('ticket_panels', 'mode', "TEXT NOT NULL DEFAULT 'thread'");
+    this.ensureColumn('ticket_panels', 'panel_content', 'TEXT');
+    this.ensureColumn('ticket_panels', 'button_label', 'TEXT');
+    this.ensureColumn('ticket_panels', 'button_style', 'TEXT');
+    this.ensureColumn('ticket_panels', 'button_emoji', 'TEXT');
+    this.ensureColumn('ticket_panels', 'open_message', 'TEXT');
+    this.ensureColumn('ticket_panels', 'close_button_label', 'TEXT');
+    this.ensureColumn('ticket_panels', 'delete_button_label', 'TEXT');
+    this.ensureColumn('ticket_panels', 'panel_channel_id', 'TEXT');
+    this.ensureColumn('ticket_panels', 'panel_message_id', 'TEXT');
     this.ensureDefaultPromptPresets();
+  }
+
+  ensureColumn(table, column, definition) {
+    const existing = this.db.prepare(`PRAGMA table_info(${table})`).all();
+    if (existing.some((row) => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   getGlobalState(key, fallback = null) {
@@ -850,13 +876,28 @@ class BotDatabase {
     this.db
       .prepare(
         `INSERT INTO ticket_panels
-         (guild_id, panel_id, name, description, category_id, support_role_id, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         (
+          guild_id, panel_id, name, description, category_id, support_role_id,
+          mode, panel_content, button_label, button_style, button_emoji,
+          open_message, close_button_label, delete_button_label, panel_channel_id, panel_message_id,
+          created_by, created_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(guild_id, panel_id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
           category_id = excluded.category_id,
-          support_role_id = excluded.support_role_id`
+          support_role_id = excluded.support_role_id,
+          mode = excluded.mode,
+          panel_content = excluded.panel_content,
+          button_label = excluded.button_label,
+          button_style = excluded.button_style,
+          button_emoji = excluded.button_emoji,
+          open_message = excluded.open_message,
+          close_button_label = excluded.close_button_label,
+          delete_button_label = excluded.delete_button_label,
+          panel_channel_id = excluded.panel_channel_id,
+          panel_message_id = excluded.panel_message_id`
       )
       .run(
         guildId,
@@ -865,6 +906,16 @@ class BotDatabase {
         panel.description || null,
         panel.categoryId || null,
         panel.supportRoleId || null,
+        panel.mode || 'thread',
+        panel.panelContent || null,
+        panel.buttonLabel || null,
+        panel.buttonStyle || null,
+        panel.buttonEmoji || null,
+        panel.openMessage || null,
+        panel.closeButtonLabel || null,
+        panel.deleteButtonLabel || null,
+        panel.panelChannelId || null,
+        panel.panelMessageId || null,
         panel.createdBy || null,
         panel.createdAt || now()
       );

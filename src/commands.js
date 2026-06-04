@@ -224,6 +224,8 @@ const PREFIX_ALIASES = {
   rolelevel: 'role-level',
   rolelvl: 'role-level',
   setupmenu: 'setup',
+  stickynote: 'sticky',
+  stickymessage: 'sticky',
   channelrestriction: 'channel-restriction',
   masssynccategories: 'mass-sync-categories',
   syncchannels: 'mass-sync-categories'
@@ -258,6 +260,9 @@ const OWNER_ALIASES = {
   restoreuser: 'restoreuser',
   role_fix: 'rolefix',
   rolefix: 'rolefix',
+  ticket: 'ticketpanel',
+  tickets: 'ticketpanel',
+  ticketpanel: 'ticketpanel',
   force_unrestrict: 'forceunrestrict',
   forceunrestrict: 'forceunrestrict'
 };
@@ -2363,7 +2368,7 @@ const HELP_SECTIONS = [
     label: 'Server Systems',
     lines: [
       '`verification setup #channel @role [message]`, `qna setup #channel personality`',
-      '`bump`, `poll`, `giveaway`, `remind`, `afk`, `snipe`, `first-message`',
+      '`sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`, `snipe`, `first-message`',
       '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, and Q&A settings.'
     ]
   },
@@ -2398,7 +2403,8 @@ const HELP_SECTIONS = [
     label: 'Owner',
     lines: [
       '`oc help`, `oc guilds`, `oc broadcast`, `oc serversettings`, `oc commandusage`, `oc riskreport`',
-      '`oc panic mode`, `oc panic ai`, `oc lock`, `oc unlock`, `oc maintenance`, `oc db stats`, `oc db backup`',
+      '`oc ticket-panel create`, `oc ticket-panel update`, `oc ticket-panel mode`, `oc panic mode`, `oc panic ai`',
+      '`oc lock`, `oc unlock`, `oc maintenance`, `oc db stats`, `oc db backup`',
       '`oc blacklist user|guild id [reason]`, `oc unblacklist user|guild id`, `oc audit`, `oc restoreuser`, `oc rolefix`'
     ]
   }
@@ -2557,6 +2563,130 @@ async function sendBroadcast(db, client, target, text) {
   return { sent, total: guilds.length };
 }
 
+function parseKeyValueOptions(args) {
+  const options = {};
+  const rest = [];
+  for (const arg of args) {
+    const index = arg.indexOf('=');
+    if (index > 0) {
+      const key = arg.slice(0, index).toLowerCase().replace(/[-_]/g, '');
+      options[key] = arg.slice(index + 1);
+    } else {
+      rest.push(arg);
+    }
+  }
+  return { options, rest };
+}
+
+function optionValue(options, keys) {
+  for (const key of keys) {
+    const normalized = key.toLowerCase().replace(/[-_]/g, '');
+    if (options[normalized] !== undefined) return options[normalized];
+  }
+  return null;
+}
+
+function ticketPanelPatchFromOptions(options) {
+  const patch = {};
+  const map = [
+    ['name', ['name', 'title']],
+    ['description', ['description', 'desc']],
+    ['mode', ['mode', 'system', 'type']],
+    ['panelContent', ['text', 'content', 'panel', 'panelText', 'panelContent']],
+    ['buttonLabel', ['button', 'buttonText', 'buttonLabel', 'openButton']],
+    ['buttonStyle', ['style', 'buttonStyle']],
+    ['buttonEmoji', ['emoji', 'buttonEmoji']],
+    ['openMessage', ['open', 'openMessage', 'ticketMessage', 'welcome']],
+    ['closeButtonLabel', ['close', 'closeButton', 'closeButtonLabel']],
+    ['deleteButtonLabel', ['delete', 'deleteButton', 'deleteButtonLabel']]
+  ];
+
+  for (const [field, keys] of map) {
+    const value = optionValue(options, keys);
+    if (value !== null) patch[field] = value;
+  }
+
+  const categoryId = idFromMention(optionValue(options, ['category', 'categoryId']));
+  if (categoryId) patch.categoryId = categoryId;
+  const supportRoleId = idFromMention(optionValue(options, ['role', 'staff', 'supportRole', 'supportRoleId']));
+  if (supportRoleId) patch.supportRoleId = supportRoleId;
+
+  return patch;
+}
+
+function ticketPanelHelpText() {
+  return [
+    '`oc ticket-panel create channel=#channel mode=channel title="Support" description="Open a ticket" button="Open Ticket"`',
+    '`oc ticket-panel create mode=thread title="Support" open_message="Hi {user}, staff will help in {ticket}"`',
+    '`oc ticket-panel update panel-id button="Contact Staff" open_message="Welcome {user}"`',
+    '`oc ticket-panel mode panel-id channel` or `oc ticket-panel mode panel-id thread`',
+    'Keys: `channel`, `mode`, `title`, `description`, `text`, `category`, `role`, `button`, `style`, `emoji`, `open_message`, `close`, `delete`.'
+  ].join('\n');
+}
+
+async function handleOwnerTicketPanel(message, db, client, args) {
+  ensureGuild(message);
+  const sub = String(args.shift() || 'help').toLowerCase();
+
+  if (sub === 'help') {
+    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'Owner Ticket Panels', description: ticketPanelHelpText(), style: 'royal' })] });
+    return;
+  }
+
+  if (sub === 'list') {
+    const panels = db.listTicketPanels(message.guild.id);
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Ticket Panels',
+          description: panels.length
+            ? panels.map((panel) => `\`${panel.panel_id}\` - ${panel.name} - **${panel.mode || 'thread'}**`).join('\n')
+            : 'No ticket panels saved for this server.',
+          style: 'ocean'
+        })
+      ]
+    });
+    return;
+  }
+
+  if (sub === 'create' || sub === 'send') {
+    const { options } = parseKeyValueOptions(args);
+    const channelId = idFromMention(optionValue(options, ['channel', 'target'])) || message.channel.id;
+    const channel = await message.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.()) throw new Error('Ticket panel channel must be a text channel.');
+    const patch = ticketPanelPatchFromOptions(options);
+    await tickets.sendTicketPanel(db, {
+      guild: message.guild,
+      channel,
+      user: message.author,
+      reply: (payload) => message.reply(payload)
+    }, patch);
+    return;
+  }
+
+  if (sub === 'mode') {
+    const panelId = String(args.shift() || '').trim();
+    const mode = String(args.shift() || '').toLowerCase();
+    if (!panelId || !['channel', 'thread'].includes(mode)) throw new Error('Usage: oc ticket-panel mode panel-id channel|thread');
+    const result = await tickets.updateTicketPanel(db, message.guild, panelId, { mode });
+    await message.reply({ embeds: [success(db, message.guild.id, `Ticket panel \`${result.panel.panelId}\` now uses **${result.panel.mode}** tickets.${result.edited ? ' Panel message updated.' : ''}`)] });
+    return;
+  }
+
+  if (sub === 'update' || sub === 'edit') {
+    const panelId = String(args.shift() || '').trim();
+    if (!panelId) throw new Error('Usage: oc ticket-panel update panel-id key=value ...');
+    const { options } = parseKeyValueOptions(args);
+    const patch = ticketPanelPatchFromOptions(options);
+    if (!Object.keys(patch).length) throw new Error('No updates provided. Use key=value options.');
+    const result = await tickets.updateTicketPanel(db, message.guild, panelId, patch);
+    await message.reply({ embeds: [success(db, message.guild.id, `Ticket panel \`${result.panel.panelId}\` updated.${result.edited ? ' Panel message edited.' : ''}`)] });
+    return;
+  }
+
+  throw new Error(`Owner ticket command not found.\n${ticketPanelHelpText()}`);
+}
+
 function tableCountsText(stats) {
   return Object.entries(stats.tables)
     .map(([table, count]) => `\`${table}\`: ${count}`)
@@ -2680,6 +2810,11 @@ async function handleOwnerPrefix(message, db, client, command, args) {
     if (!target || !text) throw new Error('Usage: broadcast all|here|guild_id message');
     const result = await sendBroadcast(db, client, target, text);
     await message.reply({ embeds: [success(db, message.guild?.id, `Broadcast sent in ${result.sent}/${result.total} guilds.`)] });
+    return;
+  }
+
+  if (command === 'ticketpanel') {
+    await handleOwnerTicketPanel(message, db, client, args);
     return;
   }
 
@@ -2876,7 +3011,7 @@ async function handleOwnerPrefix(message, db, client, command, args) {
     return;
   }
 
-  throw new Error('Owner command not found. Use help, guilds, leaveguild, broadcast, serversettings, commandusage, riskreport, panic mode, panic ai, db stats, db backup, restart, shutdown, maintenance, status, activity, lock, unlock, blacklist, unblacklist, audit, restoreuser, rolefix, forceunrestrict.');
+  throw new Error('Owner command not found. Use help, guilds, leaveguild, broadcast, ticket-panel, serversettings, commandusage, riskreport, panic mode, panic ai, db stats, db backup, restart, shutdown, maintenance, status, activity, lock, unlock, blacklist, unblacklist, audit, restoreuser, rolefix, forceunrestrict.');
 }
 
 async function handleProgressionPrefix(message, db, client, command, args) {
@@ -2983,6 +3118,72 @@ async function handleRoleLevelPrefix(message, db, args) {
   });
 }
 
+async function deleteSavedStickyMessage(guild, sticky) {
+  if (!sticky?.channelId || !sticky?.lastMessageId) return;
+  const channel = await guild.channels.fetch(sticky.channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return;
+  const stickyMessage = await channel.messages.fetch(sticky.lastMessageId).catch(() => null);
+  await stickyMessage?.delete().catch(() => null);
+}
+
+async function handleStickyPrefix(message, db, args) {
+  const sub = String(args[0] || '').toLowerCase();
+  const current = db.getConfig(message.guild.id, 'sticky');
+
+  if (['clear', 'delete', 'disable', 'off', 'remove'].includes(sub)) {
+    await deleteSavedStickyMessage(message.guild, current);
+    db.setConfig(message.guild.id, 'sticky', null);
+    await message.reply({ embeds: [success(db, message.guild.id, 'Sticky message disabled.')] });
+    return;
+  }
+
+  if (['status', 'show', 'view', 'info'].includes(sub)) {
+    await message.reply({
+      embeds: [
+        buildEmbed(db, message.guild.id, {
+          title: 'Sticky Message',
+          description: current
+            ? [`Channel: <#${current.channelId}>`, `Message: ${current.message}`].join('\n')
+            : 'No sticky message is configured.',
+          style: current ? 'amber' : 'mono'
+        })
+      ]
+    });
+    return;
+  }
+
+  const textArgs = ['set', 'on', 'enable', 'update', 'edit'].includes(sub) ? args.slice(1) : args;
+  const stickyText = textArgs.join(' ').trim();
+  if (!stickyText) throw new Error('Usage: r!sticky set your sticky message, or r!sticky clear.');
+  if (stickyText.length > 3900) throw new Error('Sticky messages must be 3900 characters or fewer.');
+
+  await deleteSavedStickyMessage(message.guild, current);
+  db.setConfig(message.guild.id, 'sticky', {
+    channelId: message.channel.id,
+    message: stickyText,
+    lastMessageId: null
+  });
+
+  await message.reply({ embeds: [success(db, message.guild.id, `Sticky message saved for ${message.channel}.`)] }).catch(() => null);
+  const sent = await message.channel.send({
+    embeds: [
+      buildEmbed(db, message.guild.id, {
+        title: 'Sticky',
+        description: stickyText,
+        style: 'amber'
+      })
+    ]
+  }).catch(() => null);
+
+  if (sent) {
+    db.setConfig(message.guild.id, 'sticky', {
+      channelId: message.channel.id,
+      message: stickyText,
+      lastMessageId: sent.id
+    });
+  }
+}
+
 async function handlePrefixCommand(message, db, client, command, args) {
   ensureGuild(message);
   if (db.isBotBanned('member', message.author.id) && !isBotOwner(message.author.id)) return;
@@ -3005,6 +3206,12 @@ async function handlePrefixCommand(message, db, client, command, args) {
   if (command === 'afk') {
     db.setAfk(message.guild.id, message.author.id, reasonOr(args, 'AFK'));
     await message.reply({ embeds: [success(db, message.guild.id, 'AFK enabled.')] });
+    return;
+  }
+
+  if (command === 'sticky') {
+    requireModerator(db, message.member);
+    await handleStickyPrefix(message, db, args);
     return;
   }
 

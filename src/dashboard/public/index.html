@@ -163,7 +163,7 @@
               </label>
               <label>
                 Footer
-                <input id="embedFooterInput" type="text" maxlength="2048" value="Sent from Bot Dashboard">
+                <input id="embedFooterInput" type="text" maxlength="2048">
               </label>
 
               <div class="builder-section wide">
@@ -188,6 +188,21 @@
                   <button id="addEmbedSelectButton" class="secondary-button compact" type="button">Add Menu</button>
                 </div>
                 <div id="embedSelectList" class="builder-list"></div>
+              </div>
+
+              <div class="builder-section wide">
+                <div class="builder-head">
+                  <h3>JSON Payload</h3>
+                  <label class="check-row json-toggle">
+                    <input id="embedUseJsonInput" type="checkbox">
+                    Send JSON
+                  </label>
+                </div>
+                <textarea id="embedJsonInput" class="code-input" rows="10" spellcheck="false" placeholder='{"content":"Hello","embed":{"title":"Mission Briefing"},"buttons":[],"selects":[]}'></textarea>
+                <div class="json-actions">
+                  <button id="syncEmbedJsonButton" class="secondary-button compact" type="button">Build JSON From Menu</button>
+                  <button id="applyEmbedJsonButton" class="secondary-button compact" type="button">Load JSON Into Menu</button>
+                </div>
               </div>
 
               <button type="submit">Send Embed</button>

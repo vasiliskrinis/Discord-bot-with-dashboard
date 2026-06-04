@@ -62,9 +62,13 @@ function bindElements() {
     embedFieldList: document.getElementById('embedFieldList'),
     embedButtonList: document.getElementById('embedButtonList'),
     embedSelectList: document.getElementById('embedSelectList'),
+    embedJsonInput: document.getElementById('embedJsonInput'),
+    embedUseJsonInput: document.getElementById('embedUseJsonInput'),
     addEmbedFieldButton: document.getElementById('addEmbedFieldButton'),
     addEmbedButtonButton: document.getElementById('addEmbedButtonButton'),
     addEmbedSelectButton: document.getElementById('addEmbedSelectButton'),
+    syncEmbedJsonButton: document.getElementById('syncEmbedJsonButton'),
+    applyEmbedJsonButton: document.getElementById('applyEmbedJsonButton'),
     embedResult: document.getElementById('embedResult'),
     configForm: document.getElementById('configForm'),
     configKeySelect: document.getElementById('configKeySelect'),
@@ -164,18 +168,35 @@ function bindEvents() {
   els.embedForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!state.selectedGuildId) return;
-    const payload = buildEmbedPayloadFromForm();
-    const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/embed`, {
-      method: 'POST',
-      body: payload
-    });
-    els.embedResult.innerHTML = response.url ? `<a href="${escapeAttribute(response.url)}" target="_blank" rel="noreferrer">Message sent</a>` : 'Message sent';
-    showToast('Custom embed sent.');
+    try {
+      const payload = buildEmbedPayloadForSubmit();
+      const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/embed`, {
+        method: 'POST',
+        body: payload
+      });
+      els.embedResult.innerHTML = response.url ? `<a href="${escapeAttribute(response.url)}" target="_blank" rel="noreferrer">Message sent</a>` : 'Message sent';
+      showToast('Custom embed sent.');
+    } catch (err) {
+      els.embedResult.textContent = err.message || 'Embed send failed.';
+      showToast(err.message || 'Embed send failed.');
+    }
   });
 
   els.addEmbedFieldButton.addEventListener('click', () => addEmbedFieldRow());
   els.addEmbedButtonButton.addEventListener('click', () => addEmbedButtonRow());
   els.addEmbedSelectButton.addEventListener('click', () => addEmbedSelectRow());
+  els.syncEmbedJsonButton.addEventListener('click', () => {
+    syncEmbedJsonFromForm();
+    showToast('JSON updated from menu.');
+  });
+  els.applyEmbedJsonButton.addEventListener('click', () => {
+    try {
+      applyEmbedPayloadToForm(parseEmbedJsonPayload());
+      showToast('JSON loaded into menu.');
+    } catch (err) {
+      showToast(err.message || 'Invalid embed JSON.');
+    }
+  });
 
   els.embedForm.addEventListener('click', (event) => {
     const removeTarget = event.target.closest('[data-builder-remove]');
@@ -476,12 +497,12 @@ function renderEmbedSender(detail) {
     addEmbedFieldRow({ name: 'Priority', value: 'High', inline: true });
   }
   if (!els.embedButtonList.children.length) {
-    addEmbedButtonRow({ label: 'Primary', style: 'primary', customId: 'dashboard:primary' });
+    addEmbedButtonRow({ label: 'Primary', style: 'primary', customId: `dashboard:button:${Date.now()}` });
   }
   if (!els.embedSelectList.children.length) {
     addEmbedSelectRow({
       placeholder: 'Choose an option',
-      customId: 'dashboard:select',
+      customId: `dashboard:select:${Date.now()}`,
       options: [
         { label: 'Option A', value: 'a', description: 'First option' },
         { label: 'Option B', value: 'b', description: 'Second option' }
@@ -542,6 +563,14 @@ function addEmbedButtonRow(button = {}) {
     <label class="check-row">
       <input class="embed-button-disabled" type="checkbox" ${button.disabled ? 'checked' : ''}>
       Disabled
+    </label>
+    <label class="wide">
+      Response Message
+      <textarea class="embed-button-response" rows="2" maxlength="1900">${escapeHtml(button.response || '')}</textarea>
+    </label>
+    <label class="check-row">
+      <input class="embed-button-public" type="checkbox" ${button.ephemeral === false ? 'checked' : ''}>
+      Public response
     </label>
     <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
   `;
@@ -605,6 +634,14 @@ function addEmbedSelectOptionRow(optionList, option = {}) {
       <input class="embed-option-default" type="checkbox" ${option.default ? 'checked' : ''}>
       Default
     </label>
+    <label class="wide">
+      Response Message
+      <textarea class="embed-option-response" rows="2" maxlength="1900">${escapeHtml(option.response || '')}</textarea>
+    </label>
+    <label class="check-row">
+      <input class="embed-option-public" type="checkbox" ${option.ephemeral === false ? 'checked' : ''}>
+      Public response
+    </label>
     <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
   `;
   optionList.appendChild(row);
@@ -637,7 +674,9 @@ function buildEmbedPayloadFromForm() {
         emoji: row.querySelector('.embed-button-emoji').value,
         customId: row.querySelector('.embed-button-custom-id').value,
         url: row.querySelector('.embed-button-url').value,
-        disabled: row.querySelector('.embed-button-disabled').checked
+        disabled: row.querySelector('.embed-button-disabled').checked,
+        response: row.querySelector('.embed-button-response').value,
+        ephemeral: !row.querySelector('.embed-button-public').checked
       }))
       .filter((button) => button.label),
     selects: [...els.embedSelectList.querySelectorAll('.embed-select-row')]
@@ -652,12 +691,209 @@ function buildEmbedPayloadFromForm() {
             value: optionRow.querySelector('.embed-option-value').value,
             description: optionRow.querySelector('.embed-option-description').value,
             emoji: optionRow.querySelector('.embed-option-emoji').value,
-            default: optionRow.querySelector('.embed-option-default').checked
+            default: optionRow.querySelector('.embed-option-default').checked,
+            response: optionRow.querySelector('.embed-option-response').value,
+            ephemeral: !optionRow.querySelector('.embed-option-public').checked
           }))
           .filter((option) => option.label && option.value)
       }))
       .filter((select) => select.options.length)
   };
+}
+
+function buildEmbedPayloadForSubmit() {
+  if (!els.embedUseJsonInput.checked) return buildEmbedPayloadFromForm();
+  const payload = normalizeEmbedJsonPayload(parseEmbedJsonPayload());
+  payload.rawJson = true;
+  payload.channelId = payload.channelId || els.embedChannelSelect.value;
+  return payload;
+}
+
+function parseEmbedJsonPayload() {
+  const text = els.embedJsonInput.value.trim();
+  if (!text) throw new Error('Paste a JSON payload first.');
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Embed JSON must be an object.');
+    }
+    return parsed;
+  } catch (err) {
+    if (err.message === 'Embed JSON must be an object.') throw err;
+    throw new Error('Invalid embed JSON. Check quotes, commas, and brackets.');
+  }
+}
+
+function syncEmbedJsonFromForm() {
+  els.embedJsonInput.value = JSON.stringify(buildEmbedPayloadFromForm(), null, 2);
+}
+
+function applyEmbedPayloadToForm(rawPayload) {
+  const payload = normalizeEmbedJsonPayload(rawPayload);
+  const embed = firstEmbedFromPayload(payload);
+  const fields = Array.isArray(embed.fields) ? embed.fields : [];
+
+  if (payload.channelId && [...els.embedChannelSelect.options].some((option) => option.value === payload.channelId)) {
+    els.embedChannelSelect.value = payload.channelId;
+  }
+  els.embedContentInput.value = payload.content || '';
+  els.embedTitleInput.value = embed.title || '';
+  els.embedDescriptionInput.value = embed.description || '';
+  els.embedColorInput.value = colorInputValue(embed.color) || '#5865f2';
+  els.embedThumbnailInput.value = urlValue(embed.thumbnail);
+  els.embedImageInput.value = urlValue(embed.image);
+  els.embedAuthorInput.value = embed.author?.name || '';
+  els.embedFooterInput.value = embed.footer?.text || '';
+
+  els.embedFieldList.innerHTML = '';
+  fields.forEach((field) => addEmbedFieldRow({
+    name: field.name || '',
+    value: field.value || '',
+    inline: Boolean(field.inline)
+  }));
+
+  els.embedButtonList.innerHTML = '';
+  (payload.buttons || []).forEach((button) => addEmbedButtonRow({
+    label: button.label || '',
+    style: buttonStyleFromDiscord(button.style),
+    emoji: emojiValue(button.emoji),
+    customId: button.customId || button.custom_id || '',
+    url: button.url || '',
+    disabled: Boolean(button.disabled),
+    response: button.response || button.responseMessage || button.message || '',
+    ephemeral: button.ephemeral !== false
+  }));
+
+  els.embedSelectList.innerHTML = '';
+  (payload.selects || []).forEach((select) => addEmbedSelectRow({
+    placeholder: select.placeholder || '',
+    customId: select.customId || select.custom_id || '',
+    minValues: select.minValues ?? select.min_values ?? 1,
+    maxValues: select.maxValues ?? select.max_values ?? 1,
+    options: Array.isArray(select.options) ? select.options.map((option) => ({
+      label: option.label || '',
+      value: option.value || '',
+      description: option.description || '',
+      emoji: emojiValue(option.emoji),
+      default: Boolean(option.default),
+      response: option.response || option.responseMessage || option.message || '',
+      ephemeral: option.ephemeral !== false
+    })) : []
+  }));
+
+  els.embedUseJsonInput.checked = false;
+}
+
+function normalizeEmbedJsonPayload(rawPayload) {
+  const payload = { ...rawPayload };
+  if (!payload.channelId && payload.channel_id) payload.channelId = String(payload.channel_id);
+  if (!payload.embed && !Array.isArray(payload.embeds) && looksLikeEmbed(payload)) {
+    payload.embed = { ...rawPayload };
+  }
+  if (!payload.embed && Array.isArray(payload.embeds)) {
+    payload.embed = payload.embeds[0] || {};
+  }
+  if (Array.isArray(payload.components) && (!Array.isArray(payload.buttons) || !Array.isArray(payload.selects))) {
+    const friendly = componentsToFriendlyControls(payload.components);
+    if (!Array.isArray(payload.buttons)) payload.buttons = friendly.buttons;
+    if (!Array.isArray(payload.selects)) payload.selects = friendly.selects;
+  }
+  payload.buttons = Array.isArray(payload.buttons) ? payload.buttons : [];
+  payload.selects = Array.isArray(payload.selects) ? payload.selects : [];
+  return payload;
+}
+
+function firstEmbedFromPayload(payload) {
+  if (payload.embed && typeof payload.embed === 'object') return payload.embed;
+  if (Array.isArray(payload.embeds) && payload.embeds[0] && typeof payload.embeds[0] === 'object') return payload.embeds[0];
+  return {};
+}
+
+function looksLikeEmbed(value) {
+  return ['title', 'description', 'color', 'thumbnail', 'image', 'author', 'footer', 'fields', 'timestamp', 'url']
+    .some((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function componentsToFriendlyControls(components) {
+  const buttons = [];
+  const selects = [];
+  components.forEach((row) => {
+    const rowComponents = Array.isArray(row?.components) ? row.components : [row].filter(Boolean);
+    rowComponents.forEach((component) => {
+      if (component.type === 2 || component.label || component.url) {
+        buttons.push({
+          label: component.label || 'Button',
+          style: buttonStyleFromDiscord(component.style),
+          emoji: emojiValue(component.emoji),
+          customId: component.custom_id || component.customId || '',
+          url: component.url || '',
+          disabled: Boolean(component.disabled),
+          response: component.response || component.responseMessage || component.message || '',
+          ephemeral: component.ephemeral !== false
+        });
+        return;
+      }
+      if (component.type === 3 || Array.isArray(component.options)) {
+        selects.push({
+          placeholder: component.placeholder || '',
+          customId: component.custom_id || component.customId || '',
+          minValues: component.min_values ?? component.minValues ?? 1,
+          maxValues: component.max_values ?? component.maxValues ?? 1,
+          options: Array.isArray(component.options) ? component.options.map((option) => ({
+            label: option.label || '',
+            value: option.value || '',
+            description: option.description || '',
+            emoji: emojiValue(option.emoji),
+            default: Boolean(option.default),
+            response: option.response || option.responseMessage || option.message || '',
+            ephemeral: option.ephemeral !== false
+          })) : []
+        });
+      }
+    });
+  });
+  return { buttons, selects };
+}
+
+function buttonStyleFromDiscord(style) {
+  const styles = {
+    1: 'primary',
+    2: 'secondary',
+    3: 'success',
+    4: 'danger',
+    5: 'link',
+    primary: 'primary',
+    secondary: 'secondary',
+    success: 'success',
+    danger: 'danger',
+    link: 'link'
+  };
+  return styles[String(style || '').toLowerCase()] || 'secondary';
+}
+
+function emojiValue(emoji) {
+  if (!emoji) return '';
+  if (typeof emoji === 'string') return emoji;
+  if (emoji.id) return emoji.name ? `${emoji.name}:${emoji.id}` : emoji.id;
+  return emoji.name || '';
+}
+
+function urlValue(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  return value.url || '';
+}
+
+function colorInputValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return `#${Math.max(0, Math.min(0xffffff, value)).toString(16).padStart(6, '0')}`;
+  }
+  const text = String(value || '').trim();
+  if (/^#[0-9a-f]{6}$/i.test(text)) return text;
+  if (/^0x[0-9a-f]{6}$/i.test(text)) return `#${text.slice(2)}`;
+  if (/^[0-9]+$/.test(text)) return `#${Math.max(0, Math.min(0xffffff, Number.parseInt(text, 10))).toString(16).padStart(6, '0')}`;
+  if (/^[0-9a-f]{6}$/i.test(text)) return `#${text}`;
+  return '';
 }
 
 function renderConfig(config) {

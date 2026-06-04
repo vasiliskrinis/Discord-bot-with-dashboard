@@ -17,6 +17,7 @@ const progression = require('./services/progression');
 const community = require('./services/community');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
+const dashboardControls = require('./services/dashboardControls');
 const { advancedLog, systemLog } = require('./services/logger');
 const watchers = require('./services/watchers');
 const { startDashboard } = require('./dashboard/server');
@@ -224,6 +225,10 @@ function attachClientEvents(client, botIndex) {
           await community.handleVerifyButton(db, interaction);
           return;
         }
+        if (interaction.customId.startsWith('dashboard:')) {
+          await dashboardControls.handleDashboardControlInteraction(db, interaction);
+          return;
+        }
         if (interaction.customId.startsWith('ticket:')) {
           if (runtimeFlags.botLocked) {
             await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Tickets are disabled by bot lock.')], ephemeral: true });
@@ -247,6 +252,11 @@ function attachClientEvents(client, botIndex) {
 
       if (interaction.isStringSelectMenu() && interaction.customId.startsWith('help:')) {
         await commands.handleHelpInteraction(db, interaction);
+        return;
+      }
+
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith('dashboard:')) {
+        await dashboardControls.handleDashboardControlInteraction(db, interaction);
         return;
       }
 

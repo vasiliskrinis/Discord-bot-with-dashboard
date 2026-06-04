@@ -9,6 +9,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  EmbedBuilder,
   PermissionsBitField,
   StringSelectMenuBuilder
 } = require('discord.js');
@@ -16,6 +17,7 @@ const env = require('../env');
 const { DEFAULT_GUILD_CONFIG } = require('../db');
 const { EMBED_STYLES, buildEmbed } = require('../embeds');
 const community = require('../services/community');
+const dashboardControlResponses = require('../services/dashboardControls');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -626,9 +628,13 @@ function memberLabel(member) {
 }
 
 function colorFromInput(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.min(0xffffff, Math.round(value)));
+  }
   const text = String(value || '').trim();
   if (/^#[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(1), 16);
   if (/^0x[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(2), 16);
+  if (/^[0-9]+$/.test(text)) return Math.max(0, Math.min(0xffffff, Number.parseInt(text, 10)));
   return null;
 }
 
@@ -641,31 +647,27 @@ function cleanUrl(value) {
   return /^https?:\/\//i.test(text) ? text : null;
 }
 
-function normalizeEmbedPayload(db, guildId, body) {
-  const embed = body.embed || {};
-  const fields = Array.isArray(embed.fields)
-    ? embed.fields.slice(0, 25).map((field) => ({
-        name: cleanText(field.name, 256) || 'Field',
-        value: cleanText(field.value, 1024) || 'None',
-        inline: Boolean(field.inline)
-      }))
-    : [];
+function urlFromInput(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return cleanUrl(value);
+  if (typeof value === 'object') return cleanUrl(value.url);
+  return null;
+}
 
-  return buildEmbed(db, guildId, {
-    title: cleanText(embed.title, 256) || 'Dashboard Embed',
-    description: cleanText(embed.description || body.description, 4000) || 'Sent from the dashboard.',
-    color: colorFromInput(embed.color),
-    thumbnail: cleanUrl(embed.thumbnail),
-    image: cleanUrl(embed.image),
-    author: embed.author?.name ? { name: cleanText(embed.author.name, 256), iconURL: cleanUrl(embed.author.iconUrl) || undefined, url: cleanUrl(embed.author.url) || undefined } : null,
-    footer: embed.footer?.text ? { text: cleanText(embed.footer.text, 2048), iconURL: cleanUrl(embed.footer.iconUrl) || undefined } : null,
-    fields,
-    style: embed.style || undefined
-  });
+function emojiFromInput(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return cleanText(value, 80);
+  if (value.id) return value.name ? `${cleanText(value.name, 40)}:${cleanText(value.id, 40)}` : cleanText(value.id, 80);
+  return value.name ? cleanText(value.name, 80) : null;
 }
 
 function buttonStyle(value) {
   const styles = {
+    1: ButtonStyle.Primary,
+    2: ButtonStyle.Secondary,
+    3: ButtonStyle.Success,
+    4: ButtonStyle.Danger,
+    5: ButtonStyle.Link,
     primary: ButtonStyle.Primary,
     secondary: ButtonStyle.Secondary,
     success: ButtonStyle.Success,
@@ -675,9 +677,79 @@ function buttonStyle(value) {
   return styles[String(value || '').toLowerCase()] || ButtonStyle.Secondary;
 }
 
-function dashboardComponents(body) {
+function buttonStyleName(value) {
+  const styles = {
+    1: 'primary',
+    2: 'secondary',
+    3: 'success',
+    4: 'danger',
+    5: 'link',
+    primary: 'primary',
+    secondary: 'secondary',
+    success: 'success',
+    danger: 'danger',
+    link: 'link'
+  };
+  return styles[String(value || '').toLowerCase()] || 'secondary';
+}
+
+function controlsFromRawComponents(components) {
+  const buttons = [];
+  const selects = [];
+  if (!Array.isArray(components)) return { buttons, selects };
+
+  for (const row of components) {
+    const rowComponents = Array.isArray(row?.components) ? row.components : [row].filter(Boolean);
+    for (const component of rowComponents) {
+      if (component.type === 2 || component.label || component.url) {
+        buttons.push({
+          label: component.label,
+          style: buttonStyleName(component.style),
+          emoji: emojiFromInput(component.emoji),
+          customId: component.customId || component.custom_id,
+          url: component.url,
+          disabled: component.disabled,
+          response: component.response || component.responseMessage || component.message,
+          ephemeral: component.ephemeral
+        });
+        continue;
+      }
+      if (component.type === 3 || Array.isArray(component.options)) {
+        selects.push({
+          placeholder: component.placeholder,
+          customId: component.customId || component.custom_id,
+          minValues: component.minValues ?? component.min_values,
+          maxValues: component.maxValues ?? component.max_values,
+          options: Array.isArray(component.options)
+            ? component.options.map((option) => ({
+                label: option.label,
+                value: option.value,
+                description: option.description,
+                emoji: emojiFromInput(option.emoji),
+                default: option.default,
+                response: option.response || option.responseMessage || option.message,
+                ephemeral: option.ephemeral
+              }))
+            : []
+        });
+      }
+    }
+  }
+
+  return { buttons, selects };
+}
+
+function dashboardControls(body) {
+  const raw = controlsFromRawComponents(body.components);
+  return {
+    buttons: Array.isArray(body.buttons) ? body.buttons : raw.buttons,
+    selects: Array.isArray(body.selects) ? body.selects : raw.selects
+  };
+}
+
+function dashboardComponents(body, controls = dashboardControls(body)) {
   const rows = [];
-  const buttons = Array.isArray(body.buttons) ? body.buttons.slice(0, 25) : [];
+  const buttons = controls.buttons.slice(0, 25);
   for (let index = 0; index < buttons.length && rows.length < 5; index += 5) {
     const row = new ActionRowBuilder();
     for (const button of buttons.slice(index, index + 5)) {
@@ -685,22 +757,23 @@ function dashboardComponents(body) {
         .setLabel(cleanText(button.label, 80) || 'Button')
         .setStyle(button.url ? ButtonStyle.Link : buttonStyle(button.style))
         .setDisabled(Boolean(button.disabled));
-      if (button.emoji) builder.setEmoji(cleanText(button.emoji, 80));
+      const emoji = emojiFromInput(button.emoji);
+      if (emoji) builder.setEmoji(emoji);
       if (button.url) builder.setURL(cleanUrl(button.url) || 'https://discord.com');
-      else builder.setCustomId(cleanText(button.customId, 100) || `dashboard:button:${index}:${row.components.length}`);
+      else builder.setCustomId(cleanText(button.customId || button.custom_id, 100) || `dashboard:button:${index}:${row.components.length}`);
       row.addComponents(builder);
     }
     if (row.components.length) rows.push(row);
   }
 
-  const selects = Array.isArray(body.selects) ? body.selects.slice(0, 5 - rows.length) : [];
+  const selects = controls.selects.slice(0, 5 - rows.length);
   for (const select of selects) {
     const options = Array.isArray(select.options) ? select.options.slice(0, 25) : [];
     if (!options.length) continue;
-    const minValues = Math.max(0, Math.min(Number(select.minValues ?? 1), options.length));
-    const maxValues = Math.max(minValues || 1, Math.min(Number(select.maxValues ?? 1), options.length));
+    const minValues = Math.max(0, Math.min(Number(select.minValues ?? select.min_values ?? 1), options.length));
+    const maxValues = Math.max(minValues || 1, Math.min(Number(select.maxValues ?? select.max_values ?? 1), options.length));
     const menu = new StringSelectMenuBuilder()
-      .setCustomId(cleanText(select.customId, 100) || `dashboard:select:${rows.length}`)
+      .setCustomId(cleanText(select.customId || select.custom_id, 100) || `dashboard:select:${rows.length}`)
       .setPlaceholder(cleanText(select.placeholder, 150) || 'Choose an option')
       .setMinValues(minValues)
       .setMaxValues(maxValues)
@@ -711,13 +784,104 @@ function dashboardComponents(body) {
           description: cleanText(option.description, 100) || undefined,
           default: Boolean(option.default)
         };
-        if (option.emoji) item.emoji = cleanText(option.emoji, 80);
+        if (option.emoji) item.emoji = emojiFromInput(option.emoji);
         return item;
       }));
     rows.push(new ActionRowBuilder().addComponents(menu));
   }
 
   return rows;
+}
+
+function rawEmbedSources(body) {
+  if (Array.isArray(body.embeds)) {
+    return body.embeds.filter((embed) => embed && typeof embed === 'object').slice(0, 10);
+  }
+  if (body.embed && typeof body.embed === 'object') return [body.embed];
+  if (looksLikeRawEmbed(body)) return [body];
+  return [];
+}
+
+function looksLikeRawEmbed(value) {
+  return ['title', 'description', 'color', 'thumbnail', 'image', 'author', 'footer', 'fields', 'timestamp', 'url']
+    .some((key) => Object.prototype.hasOwnProperty.call(value || {}, key));
+}
+
+function rawEmbedsFromDashboard(body) {
+  return rawEmbedSources(body)
+    .map(rawEmbedFromInput)
+    .filter(Boolean);
+}
+
+function rawEmbedFromInput(source) {
+  const embed = new EmbedBuilder();
+  let hasVisibleContent = false;
+
+  const title = cleanText(source.title, 256);
+  if (title) {
+    embed.setTitle(title);
+    hasVisibleContent = true;
+  }
+
+  const description = cleanText(source.description, 4000);
+  if (description) {
+    embed.setDescription(description);
+    hasVisibleContent = true;
+  }
+
+  const color = colorFromInput(source.color ?? source.colour);
+  if (color !== null) embed.setColor(color);
+
+  const url = cleanUrl(source.url);
+  if (url) embed.setURL(url);
+
+  const thumbnail = urlFromInput(source.thumbnail);
+  if (thumbnail) {
+    embed.setThumbnail(thumbnail);
+    hasVisibleContent = true;
+  }
+
+  const image = urlFromInput(source.image);
+  if (image) {
+    embed.setImage(image);
+    hasVisibleContent = true;
+  }
+
+  if (source.author?.name) {
+    embed.setAuthor({
+      name: cleanText(source.author.name, 256),
+      iconURL: urlFromInput(source.author.iconUrl || source.author.icon_url) || undefined,
+      url: cleanUrl(source.author.url) || undefined
+    });
+    hasVisibleContent = true;
+  }
+
+  if (source.footer?.text) {
+    embed.setFooter({
+      text: cleanText(source.footer.text, 2048),
+      iconURL: urlFromInput(source.footer.iconUrl || source.footer.icon_url) || undefined
+    });
+    hasVisibleContent = true;
+  }
+
+  const fields = Array.isArray(source.fields)
+    ? source.fields.slice(0, 25).map((field) => ({
+        name: cleanText(field.name, 256) || 'Field',
+        value: cleanText(field.value, 1024) || 'None',
+        inline: Boolean(field.inline)
+      }))
+    : [];
+  if (fields.length) {
+    embed.addFields(fields);
+    hasVisibleContent = true;
+  }
+
+  if (source.timestamp) {
+    const timestamp = source.timestamp === true ? new Date() : new Date(source.timestamp);
+    if (!Number.isNaN(timestamp.getTime())) embed.setTimestamp(timestamp);
+  }
+
+  return hasVisibleContent ? embed : null;
 }
 
 async function sendCustomEmbedFromDashboard(client, db, guildId, body) {
@@ -727,13 +891,19 @@ async function sendCustomEmbedFromDashboard(client, db, guildId, body) {
   if (!channelId) throw httpError(400, 'channelId is required.');
   const channel = await guild.channels.fetch(channelId).catch(() => null);
   if (!channel?.isTextBased?.()) throw httpError(400, 'Target channel must be text-based.');
+  const embeds = rawEmbedsFromDashboard(body);
+  const controls = dashboardControls(body);
+  const components = dashboardComponents(body, controls);
+  const content = cleanText(body.content, 1900) || undefined;
+  if (!content && !embeds.length && !components.length) throw httpError(400, 'Message content, an embed, or components are required.');
 
   const message = await channel.send({
-    content: cleanText(body.content, 1900) || undefined,
-    embeds: [normalizeEmbedPayload(db, guild.id, body)],
-    components: dashboardComponents(body),
+    content,
+    embeds: embeds.length ? embeds : undefined,
+    components,
     allowedMentions: { parse: [], users: [], roles: [] }
   });
+  dashboardControlResponses.saveDashboardControlResponses(db, guild.id, controls);
 
   return {
     messageId: message.id,
