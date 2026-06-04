@@ -89,6 +89,8 @@ function bindElements() {
     blacklistId: document.getElementById('blacklistId'),
     blacklistReason: document.getElementById('blacklistReason'),
     backupButton: document.getElementById('backupButton'),
+    backupImportInput: document.getElementById('backupImportInput'),
+    backupImportButton: document.getElementById('backupImportButton'),
     backupResult: document.getElementById('backupResult'),
     ownerHealth: document.getElementById('ownerHealth'),
     ownerServerList: document.getElementById('ownerServerList'),
@@ -269,6 +271,33 @@ function bindEvents() {
       showToast('Database backup created.');
     } finally {
       els.backupButton.disabled = false;
+    }
+  });
+
+  els.backupImportButton.addEventListener('click', async () => {
+    const file = els.backupImportInput.files?.[0];
+    if (!file) {
+      showToast('Choose a backup file first.');
+      return;
+    }
+    if (!window.confirm('Import this backup and replace the current dashboard database data?')) return;
+
+    els.backupImportButton.disabled = true;
+    try {
+      const response = await uploadBackupFile(file);
+      els.backupResult.textContent = `Imported ${formatNumber(response.importedRows || 0)} rows`;
+      if (response.database) renderDatabase(response.database);
+      await loadOverview(false);
+      if (state.selectedGuildId) {
+        await loadGuild(state.selectedGuildId).catch(() => null);
+      }
+      els.backupImportInput.value = '';
+      showToast('Database backup imported.');
+    } catch (err) {
+      els.backupResult.textContent = err.message || 'Backup import failed.';
+      showToast(err.message || 'Backup import failed.');
+    } finally {
+      els.backupImportButton.disabled = false;
     }
   });
 
@@ -1340,6 +1369,26 @@ async function request(path, options = {}) {
     if (response.status === 401 && !options.allowUnauthenticated) {
       showLogin();
     }
+    throw new Error(data.error || response.statusText);
+  }
+
+  return data;
+}
+
+async function uploadBackupFile(file) {
+  const response = await fetch(dashboardUrl('/api/owner/backup/import'), {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Backup-Name': file.name || 'backup.sqlite'
+    },
+    body: file
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    if (response.status === 401) showLogin();
     throw new Error(data.error || response.statusText);
   }
 

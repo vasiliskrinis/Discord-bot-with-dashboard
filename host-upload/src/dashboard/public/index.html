@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=4">
+    <link rel="stylesheet" href="styles.css?v=5">
   </head>
   <body>
     <div id="loginView" class="login-view is-hidden">
@@ -329,7 +329,14 @@
                 <h2>Database</h2>
                 <span id="backupResult" class="muted"></span>
               </div>
-              <button id="backupButton" class="primary-button" type="button">Create Backup</button>
+              <div class="backup-actions">
+                <button id="backupButton" class="primary-button" type="button">Create Backup</button>
+                <label class="file-picker">
+                  <span>Backup File</span>
+                  <input id="backupImportInput" type="file" accept=".sqlite,.sqlite3,.db,.backup,application/octet-stream">
+                </label>
+                <button id="backupImportButton" class="secondary-button" type="button">Import Backup</button>
+              </div>
               <div id="ownerHealth" class="mini-grid"></div>
             </section>
 
@@ -379,6 +386,6 @@
         </div>
       </section>
     </div>
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=4"></script>
   </body>
 </html>

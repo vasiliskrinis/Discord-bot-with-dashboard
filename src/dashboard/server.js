@@ -22,6 +22,7 @@ const dashboardControlResponses = require('../services/dashboardControls');
 const SESSION_COOKIE = 'bot_dashboard_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_BODY_BYTES = 256 * 1024;
+const MAX_BACKUP_BYTES = 64 * 1024 * 1024;
 
 const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -261,6 +262,11 @@ async function handleRequest(context) {
 
     if (pathname === '/api/owner/backup' && req.method === 'POST') {
       sendJson(res, 200, createDashboardBackup(db));
+      return;
+    }
+
+    if (pathname === '/api/owner/backup/import' && req.method === 'POST') {
+      sendJson(res, 200, await importDashboardBackup(req, db));
       return;
     }
 
@@ -1002,13 +1008,60 @@ function updateBotBan(client, db, body) {
 
 function createDashboardBackup(db) {
   const backupPath = db.backupTo(path.join('data', 'backups', `bot-${timestampName()}.sqlite`));
-  const stats = db.databaseStats();
   return {
     filePath: backupPath,
-    database: {
-      ...stats,
-      totalRows: Object.values(stats.tables).reduce((sum, count) => sum + count, 0)
-    }
+    database: databasePayload(db.databaseStats())
+  };
+}
+
+async function importDashboardBackup(req, db) {
+  const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const sourcePath = contentType === 'application/json'
+    ? await backupPathFromJson(req)
+    : await saveUploadedBackup(req);
+
+  try {
+    const result = db.importFromBackup(sourcePath);
+    return {
+      ...result,
+      importedRows: result.tables.reduce((sum, item) => sum + Number(item.rows || 0), 0),
+      database: databasePayload(result.database)
+    };
+  } catch (err) {
+    throw httpError(400, err.message || 'Backup import failed.');
+  }
+}
+
+async function backupPathFromJson(req) {
+  const body = await readJsonBody(req);
+  const filePath = String(body.filePath || body.path || '').trim();
+  if (!filePath) throw httpError(400, 'Backup filePath is required.');
+  return filePath;
+}
+
+async function saveUploadedBackup(req) {
+  const body = await readRawBody(req, MAX_BACKUP_BYTES);
+  if (!body.length) throw httpError(400, 'Backup upload is empty.');
+
+  const fileName = safeBackupFileName(req.headers['x-backup-name']);
+  const targetPath = path.join('data', 'backups', 'imports', `${timestampName()}-${fileName}`);
+  const resolved = path.resolve(process.cwd(), targetPath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, body);
+  return resolved;
+}
+
+function safeBackupFileName(value) {
+  const base = path.basename(String(value || 'backup.sqlite')).replace(/[^a-z0-9._-]/gi, '_').slice(0, 100);
+  const name = base || 'backup.sqlite';
+  return path.extname(name) ? name : `${name}.sqlite`;
+}
+
+function databasePayload(stats) {
+  const tables = stats.tables || {};
+  return {
+    ...stats,
+    totalRows: Object.values(tables).reduce((sum, count) => sum + count, 0)
   };
 }
 
@@ -1383,6 +1436,18 @@ async function readJsonBody(req) {
   } catch {
     throw httpError(400, 'Request body must be valid JSON.');
   }
+}
+
+async function readRawBody(req, maxBytes) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) throw httpError(413, 'Backup file is too large.');
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function serveStatic(res, staticRoot, pathname, headOnly = false) {

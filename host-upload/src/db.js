@@ -63,6 +63,10 @@ function decode(value, fallback = null) {
   }
 }
 
+function quoteIdentifier(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
 class BotDatabase {
   constructor(filePath) {
     const resolved = filePath === ':memory:' ? ':memory:' : path.resolve(process.cwd(), filePath);
@@ -848,14 +852,25 @@ class BotDatabase {
       .all(guildId, userId);
   }
 
-  databaseStats() {
-    const tables = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC")
+  tableNames(schema = 'main', includeInternal = false) {
+    const internalFilter = includeInternal ? '' : "AND name NOT LIKE 'sqlite_%'";
+    return this.db
+      .prepare(`SELECT name FROM ${quoteIdentifier(schema)}.sqlite_master WHERE type = 'table' ${internalFilter} ORDER BY name ASC`)
       .all()
       .map((row) => row.name);
+  }
+
+  tableColumns(table, schema = 'main') {
+    return this.db
+      .prepare(`PRAGMA ${quoteIdentifier(schema)}.table_info(${quoteIdentifier(table)})`)
+      .all();
+  }
+
+  databaseStats() {
+    const tables = this.tableNames();
     const counts = {};
     for (const table of tables) {
-      counts[table] = this.db.prepare(`SELECT COUNT(*) AS count FROM "${table}"`).get().count;
+      counts[table] = this.db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`).get().count;
     }
     return {
       filePath: this.filePath,
@@ -870,6 +885,96 @@ class BotDatabase {
     const escaped = resolved.replaceAll("'", "''");
     this.db.exec(`VACUUM INTO '${escaped}';`);
     return resolved;
+  }
+
+  importFromBackup(filePath, options = {}) {
+    if (this.filePath === ':memory:') throw new Error('Can not import a backup into an in-memory database.');
+
+    const resolved = path.resolve(process.cwd(), filePath);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new Error('Backup file does not exist.');
+    }
+    if (path.resolve(this.filePath) === resolved) {
+      throw new Error('Can not import the active database file into itself.');
+    }
+
+    const safetyBackupPath = options.safetyBackupPath === false
+      ? null
+      : this.backupTo(options.safetyBackupPath || path.join('data', 'backups', `pre-import-${now()}.sqlite`));
+    const schema = `backup_${now()}`;
+    const escapedPath = resolved.replaceAll("'", "''");
+    const imports = [];
+    const previousForeignKeys = Boolean(this.db.prepare('PRAGMA foreign_keys').get().foreign_keys);
+
+    this.db.exec(`ATTACH DATABASE '${escapedPath}' AS ${quoteIdentifier(schema)};`);
+    try {
+      const currentTables = this.tableNames('main');
+      const backupTables = new Set(this.tableNames(schema));
+      const missingTables = currentTables.filter((table) => !backupTables.has(table));
+      if (missingTables.length) {
+        throw new Error(`Backup is missing required table(s): ${missingTables.join(', ')}.`);
+      }
+
+      this.db.exec('PRAGMA foreign_keys = OFF;');
+      this.db.exec('BEGIN IMMEDIATE;');
+      try {
+        for (const table of currentTables) {
+          const currentColumns = this.tableColumns(table, 'main');
+          const backupColumns = new Set(this.tableColumns(table, schema).map((column) => column.name));
+          const importColumns = currentColumns
+            .filter((column) => backupColumns.has(column.name))
+            .map((column) => column.name);
+          const missingRequiredColumns = currentColumns
+            .filter((column) => !backupColumns.has(column.name) && column.notnull && column.dflt_value === null && !column.pk)
+            .map((column) => column.name);
+
+          if (missingRequiredColumns.length) {
+            throw new Error(`Backup table ${table} is missing required column(s): ${missingRequiredColumns.join(', ')}.`);
+          }
+
+          this.db.prepare(`DELETE FROM ${quoteIdentifier(table)}`).run();
+          if (!importColumns.length) {
+            imports.push({ table, rows: 0 });
+            continue;
+          }
+
+          const columnList = importColumns.map(quoteIdentifier).join(', ');
+          const result = this.db
+            .prepare(`INSERT INTO ${quoteIdentifier(table)} (${columnList}) SELECT ${columnList} FROM ${quoteIdentifier(schema)}.${quoteIdentifier(table)}`)
+            .run();
+          imports.push({ table, rows: Number(result.changes || 0) });
+        }
+
+        this.importSqliteSequence(schema);
+        this.db.exec('COMMIT;');
+      } catch (err) {
+        this.db.exec('ROLLBACK;');
+        throw err;
+      } finally {
+        this.db.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'};`);
+      }
+    } finally {
+      this.db.exec(`DETACH DATABASE ${quoteIdentifier(schema)};`);
+    }
+
+    this.ensureDefaultPromptPresets();
+    return {
+      filePath: resolved,
+      safetyBackupPath,
+      tables: imports,
+      database: this.databaseStats()
+    };
+  }
+
+  importSqliteSequence(schema) {
+    const currentInternal = new Set(this.tableNames('main', true));
+    const backupInternal = new Set(this.tableNames(schema, true));
+    if (!currentInternal.has('sqlite_sequence') || !backupInternal.has('sqlite_sequence')) return;
+
+    this.db.prepare('DELETE FROM sqlite_sequence').run();
+    this.db
+      .prepare(`INSERT INTO sqlite_sequence (name, seq) SELECT name, seq FROM ${quoteIdentifier(schema)}.${quoteIdentifier('sqlite_sequence')}`)
+      .run();
   }
 
   saveTicketPanel(guildId, panel) {

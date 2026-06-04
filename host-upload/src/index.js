@@ -190,25 +190,44 @@ function attachClientEvents(client, botIndex) {
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
       const runtimeFlags = db.runtimeFlags();
-      const ownerBypass = isBotOwner(interaction.user?.id);
+      const interactionUserId = interaction.user?.id;
+      const ownerBypass = isBotOwner(interactionUserId);
       if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) {
         const payload = { embeds: [warning(db, interaction.guild?.id, 'The bot is in maintenance/panic mode. Try again later.')], ephemeral: true };
-        if (interaction.isRepliable()) await interaction.reply(payload).catch(() => null);
+        await replyToInteractionOnce(interaction, payload);
+        return;
+      }
+
+      if (interaction.guild && db.isBotBanned('guild', interaction.guild.id) && !ownerBypass) {
+        await replyToInteractionOnce(interaction, {
+          embeds: [warning(db, interaction.guild.id, 'The bot is disabled in this server.')],
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (interactionUserId && db.isBotBanned('member', interactionUserId) && !ownerBypass) {
+        await replyToInteractionOnce(interaction, {
+          embeds: [warning(db, interaction.guild?.id, 'You are not allowed to use this bot.')],
+          ephemeral: true
+        });
         return;
       }
 
       if (interaction.isChatInputCommand()) {
         if (!env.enableSlashCommands) {
-          await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Slash commands are disabled in .env.')], ephemeral: true });
+          await replyToInteractionOnce(interaction, { embeds: [warning(db, interaction.guild?.id, 'Slash commands are disabled in .env.')], ephemeral: true });
           return;
         }
-        if (interaction.guild && db.isBotBanned('guild', interaction.guild.id) && !ownerBypass) return;
-        if (db.isBotBanned('member', interaction.user.id) && !ownerBypass) return;
         await commands.handleSlash(interaction, db, client);
         return;
       }
 
       if (interaction.isButton()) {
+        if (dashboardControls.hasDashboardControlResponse(db, interaction)) {
+          await dashboardControls.handleDashboardControlInteraction(db, interaction);
+          return;
+        }
         if (interaction.customId.startsWith('setup:')) {
           await commands.handleSetupInteraction(db, interaction);
           return;
@@ -231,7 +250,7 @@ function attachClientEvents(client, botIndex) {
         }
         if (interaction.customId.startsWith('ticket:')) {
           if (runtimeFlags.botLocked) {
-            await interaction.reply({ embeds: [warning(db, interaction.guild?.id, 'Tickets are disabled by bot lock.')], ephemeral: true });
+            await replyToInteractionOnce(interaction, { embeds: [warning(db, interaction.guild?.id, 'Tickets are disabled by bot lock.')], ephemeral: true });
             return;
           }
           await tickets.handleTicketButton(db, interaction);
@@ -244,11 +263,11 @@ function attachClientEvents(client, botIndex) {
           interaction.isChannelSelectMenu() ||
           interaction.isRoleSelectMenu() ||
           interaction.isUserSelectMenu()) &&
-      interaction.customId.startsWith('setup:')
-    ) {
-      await commands.handleSetupInteraction(db, interaction);
-      return;
-    }
+        interaction.customId.startsWith('setup:')
+      ) {
+        await commands.handleSetupInteraction(db, interaction);
+        return;
+      }
 
       if (interaction.isStringSelectMenu() && interaction.customId.startsWith('help:')) {
         await commands.handleHelpInteraction(db, interaction);
@@ -260,6 +279,11 @@ function attachClientEvents(client, botIndex) {
         return;
       }
 
+      if (interaction.isStringSelectMenu() && dashboardControls.hasDashboardControlResponse(db, interaction)) {
+        await dashboardControls.handleDashboardControlInteraction(db, interaction);
+        return;
+      }
+
       if (interaction.isModalSubmit() && interaction.customId.startsWith('restrict-modal:')) {
         await restrictions.handleRestrictModal(db, interaction);
         return;
@@ -267,13 +291,59 @@ function attachClientEvents(client, botIndex) {
 
       if (interaction.isModalSubmit() && interaction.customId.startsWith('setup:modal:')) {
         await commands.handleSetupInteraction(db, interaction);
+        return;
       }
+
+      await handleUnhandledInteraction(interaction);
     } catch (err) {
+      logInteractionError(interaction, err);
       const payload = { embeds: [error(db, interaction.guild?.id, err.message || 'Interaction failed.')], ephemeral: true };
-      if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => null);
-      else await interaction.reply(payload).catch(() => null);
+      await replyToInteractionOnce(interaction, payload).catch((replyErr) => {
+        console.error('Failed to send interaction error response:', replyErr);
+      });
     }
   });
+}
+
+async function handleUnhandledInteraction(interaction) {
+  if (!interaction.isRepliable?.()) return;
+  console.warn('Unhandled interaction:', interactionDebugInfo(interaction));
+  await replyToInteractionOnce(interaction, {
+    content: 'No action is configured for this interaction.',
+    ephemeral: true,
+    allowedMentions: { parse: [], users: [], roles: [] }
+  });
+}
+
+async function replyToInteractionOnce(interaction, payload) {
+  if (!interaction.isRepliable?.() || interaction.replied) return false;
+  if (interaction.deferred) {
+    const { ephemeral, ...editPayload } = payload;
+    await interaction.editReply(editPayload);
+    return true;
+  }
+  await interaction.reply(payload);
+  return true;
+}
+
+function logInteractionError(interaction, err) {
+  console.error('Interaction handling failed:', {
+    ...interactionDebugInfo(interaction),
+    error: err?.stack || err?.message || String(err)
+  });
+}
+
+function interactionDebugInfo(interaction) {
+  return {
+    type: interaction.type,
+    commandName: interaction.commandName || null,
+    customId: interaction.customId || null,
+    guildId: interaction.guild?.id || null,
+    channelId: interaction.channel?.id || null,
+    userId: interaction.user?.id || null,
+    replied: Boolean(interaction.replied),
+    deferred: Boolean(interaction.deferred)
+  };
 }
 
 async function handleRestrictChannelMessage(message, client) {
