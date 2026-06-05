@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="stylesheet" href="styles.css?v=14">
   </head>
   <body>
     <div id="loginView" class="login-view is-hidden">
@@ -124,6 +124,153 @@
         <section id="serverView" class="view is-hidden">
           <div id="serverHeader" class="server-header"></div>
           <div id="serverActionBar" class="action-bar"></div>
+
+          <section class="panel server-control-panel">
+            <div class="panel-head">
+              <h2>Server Control Center</h2>
+              <span id="serverControlStatus" class="muted"></span>
+            </div>
+            <div class="server-control-grid">
+              <form id="channelCreateForm" class="control-form control-card">
+                <h3 class="wide">Create Channel</h3>
+                <label>
+                  Type
+                  <select id="channelCreateTypeSelect">
+                    <option value="text">Text</option>
+                    <option value="voice">Voice</option>
+                    <option value="announcement">Announcement</option>
+                    <option value="forum">Forum</option>
+                    <option value="stage">Stage</option>
+                  </select>
+                </label>
+                <label>
+                  Name
+                  <input id="channelCreateNameInput" type="text" maxlength="100" placeholder="announcements">
+                </label>
+                <label>
+                  Category
+                  <select id="channelCreateCategorySelect"></select>
+                </label>
+                <label>
+                  Slowmode
+                  <input id="channelCreateSlowmodeInput" type="number" min="0" max="21600" value="0">
+                </label>
+                <label class="wide">
+                  Topic
+                  <input id="channelCreateTopicInput" type="text" maxlength="1024">
+                </label>
+                <button class="primary-button wide" type="submit">Create Channel</button>
+              </form>
+
+              <form id="channelManageForm" class="control-form control-card">
+                <h3 class="wide">Manage Channel</h3>
+                <label class="wide">
+                  Channel
+                  <select id="channelManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="channelManageNameInput" type="text" maxlength="100">
+                </label>
+                <label>
+                  Category
+                  <select id="channelManageCategorySelect"></select>
+                </label>
+                <label>
+                  Slowmode
+                  <input id="channelManageSlowmodeInput" type="number" min="0" max="21600" value="0">
+                </label>
+                <label>
+                  Send Messages
+                  <select id="channelManageLockSelect">
+                    <option value="keep">No change</option>
+                    <option value="unlock">Unlocked</option>
+                    <option value="lock">Locked</option>
+                  </select>
+                </label>
+                <label class="wide">
+                  Topic
+                  <input id="channelManageTopicInput" type="text" maxlength="1024">
+                </label>
+                <div class="button-row wide">
+                  <button id="channelRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="channelUpdateButton" class="secondary-button" type="button">Update</button>
+                  <button id="channelDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="categoryCreateForm" class="control-form control-card compact-card">
+                <h3 class="wide">Create Category</h3>
+                <label class="wide">
+                  Name
+                  <input id="categoryCreateNameInput" type="text" maxlength="100" placeholder="Support">
+                </label>
+                <button class="primary-button wide" type="submit">Create Category</button>
+              </form>
+
+              <form id="categoryManageForm" class="control-form control-card compact-card">
+                <h3 class="wide">Manage Category</h3>
+                <label>
+                  Category
+                  <select id="categoryManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="categoryManageNameInput" type="text" maxlength="100">
+                </label>
+                <div class="button-row wide">
+                  <button id="categoryRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="categoryDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="roleCreateForm" class="control-form control-card compact-card">
+                <h3 class="wide">Create Role</h3>
+                <label>
+                  Name
+                  <input id="roleCreateNameInput" type="text" maxlength="100" placeholder="Moderator">
+                </label>
+                <label>
+                  Color
+                  <input id="roleCreateColorInput" type="color" value="#5865f2">
+                </label>
+                <label class="check-row">
+                  <input id="roleCreateHoistInput" type="checkbox">
+                  Display
+                </label>
+                <label class="check-row">
+                  <input id="roleCreateMentionableInput" type="checkbox">
+                  Mentionable
+                </label>
+                <button class="primary-button wide" type="submit">Create Role</button>
+              </form>
+
+              <form id="roleManageForm" class="control-form control-card compact-card">
+                <h3 class="wide">Manage Role</h3>
+                <label>
+                  Role
+                  <select id="roleManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="roleManageNameInput" type="text" maxlength="100">
+                </label>
+                <div class="button-row wide">
+                  <button id="roleRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="roleDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="serverRenameForm" class="control-form control-card compact-card">
+                <h3 class="wide">Server Identity</h3>
+                <label class="wide">
+                  Server name
+                  <input id="serverNameInput" type="text" maxlength="100">
+                </label>
+                <button class="primary-button wide" type="submit">Rename Server</button>
+              </form>
+            </div>
+          </section>
 
           <section class="panel">
             <div class="panel-head">
@@ -518,6 +665,6 @@
         </div>
       </section>
     </div>
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=12"></script>
   </body>
 </html>

@@ -56,6 +56,42 @@ function bindElements() {
     botBans: document.getElementById('botBans'),
     serverHeader: document.getElementById('serverHeader'),
     serverActionBar: document.getElementById('serverActionBar'),
+    serverControlStatus: document.getElementById('serverControlStatus'),
+    channelCreateForm: document.getElementById('channelCreateForm'),
+    channelCreateTypeSelect: document.getElementById('channelCreateTypeSelect'),
+    channelCreateNameInput: document.getElementById('channelCreateNameInput'),
+    channelCreateCategorySelect: document.getElementById('channelCreateCategorySelect'),
+    channelCreateTopicInput: document.getElementById('channelCreateTopicInput'),
+    channelCreateSlowmodeInput: document.getElementById('channelCreateSlowmodeInput'),
+    channelManageForm: document.getElementById('channelManageForm'),
+    channelManageSelect: document.getElementById('channelManageSelect'),
+    channelManageNameInput: document.getElementById('channelManageNameInput'),
+    channelManageCategorySelect: document.getElementById('channelManageCategorySelect'),
+    channelManageTopicInput: document.getElementById('channelManageTopicInput'),
+    channelManageSlowmodeInput: document.getElementById('channelManageSlowmodeInput'),
+    channelManageLockSelect: document.getElementById('channelManageLockSelect'),
+    channelRenameButton: document.getElementById('channelRenameButton'),
+    channelUpdateButton: document.getElementById('channelUpdateButton'),
+    channelDeleteButton: document.getElementById('channelDeleteButton'),
+    categoryCreateForm: document.getElementById('categoryCreateForm'),
+    categoryCreateNameInput: document.getElementById('categoryCreateNameInput'),
+    categoryManageForm: document.getElementById('categoryManageForm'),
+    categoryManageSelect: document.getElementById('categoryManageSelect'),
+    categoryManageNameInput: document.getElementById('categoryManageNameInput'),
+    categoryRenameButton: document.getElementById('categoryRenameButton'),
+    categoryDeleteButton: document.getElementById('categoryDeleteButton'),
+    roleCreateForm: document.getElementById('roleCreateForm'),
+    roleCreateNameInput: document.getElementById('roleCreateNameInput'),
+    roleCreateColorInput: document.getElementById('roleCreateColorInput'),
+    roleCreateHoistInput: document.getElementById('roleCreateHoistInput'),
+    roleCreateMentionableInput: document.getElementById('roleCreateMentionableInput'),
+    roleManageForm: document.getElementById('roleManageForm'),
+    roleManageSelect: document.getElementById('roleManageSelect'),
+    roleManageNameInput: document.getElementById('roleManageNameInput'),
+    roleRenameButton: document.getElementById('roleRenameButton'),
+    roleDeleteButton: document.getElementById('roleDeleteButton'),
+    serverRenameForm: document.getElementById('serverRenameForm'),
+    serverNameInput: document.getElementById('serverNameInput'),
     ticketsHeader: document.getElementById('ticketsHeader'),
     ticketStats: document.getElementById('ticketStats'),
     embedForm: document.getElementById('embedForm'),
@@ -205,6 +241,141 @@ function bindEvents() {
 
   els.configKeySelect.addEventListener('change', syncConfigEditor);
   els.configPickerButton.addEventListener('click', openConfigPicker);
+
+  els.channelCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'channel-create',
+      channelType: els.channelCreateTypeSelect.value,
+      name: els.channelCreateNameInput.value,
+      parentId: els.channelCreateCategorySelect.value,
+      topic: els.channelCreateTopicInput.value,
+      slowmode: els.channelCreateSlowmodeInput.value
+    }, {
+      button: els.channelCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.channelCreateNameInput.value = '';
+        els.channelCreateTopicInput.value = '';
+        els.channelCreateSlowmodeInput.value = '0';
+      }
+    });
+  });
+
+  els.categoryCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'category-create',
+      name: els.categoryCreateNameInput.value
+    }, {
+      button: els.categoryCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.categoryCreateNameInput.value = '';
+      }
+    });
+  });
+
+  els.serverRenameForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'server-rename',
+      name: els.serverNameInput.value
+    }, { button: els.serverRenameForm.querySelector('button[type="submit"]') });
+  });
+
+  els.roleCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'role-create',
+      name: els.roleCreateNameInput.value,
+      color: els.roleCreateColorInput.value,
+      hoist: els.roleCreateHoistInput.checked,
+      mentionable: els.roleCreateMentionableInput.checked
+    }, {
+      button: els.roleCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.roleCreateNameInput.value = '';
+        els.roleCreateHoistInput.checked = false;
+        els.roleCreateMentionableInput.checked = false;
+      }
+    });
+  });
+
+  els.channelManageSelect.addEventListener('change', syncChannelManager);
+  els.categoryManageSelect.addEventListener('change', syncCategoryManager);
+  els.roleManageSelect.addEventListener('change', syncRoleManager);
+  els.channelManageForm.addEventListener('submit', (event) => event.preventDefault());
+  els.categoryManageForm.addEventListener('submit', (event) => event.preventDefault());
+  els.roleManageForm.addEventListener('submit', (event) => event.preventDefault());
+
+  els.channelRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'channel-rename',
+      channelId: els.channelManageSelect.value,
+      name: els.channelManageNameInput.value
+    }, { button: els.channelRenameButton });
+  });
+
+  els.channelUpdateButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'channel-update',
+      channelId: els.channelManageSelect.value,
+      parentId: els.channelManageCategorySelect.value,
+      topic: els.channelManageTopicInput.value,
+      slowmode: els.channelManageSlowmodeInput.value,
+      lockState: els.channelManageLockSelect.value
+    }, {
+      button: els.channelUpdateButton,
+      onSuccess: () => {
+        els.channelManageLockSelect.value = 'keep';
+      }
+    });
+  });
+
+  els.channelDeleteButton.addEventListener('click', async () => {
+    const channel = selectedDashboardOption('channels', els.channelManageSelect.value);
+    if (!channel || !window.confirm(`Delete #${channel.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'channel-delete',
+      channelId: channel.id,
+      confirm: channel.id
+    }, { button: els.channelDeleteButton });
+  });
+
+  els.categoryRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'category-rename',
+      categoryId: els.categoryManageSelect.value,
+      name: els.categoryManageNameInput.value
+    }, { button: els.categoryRenameButton });
+  });
+
+  els.categoryDeleteButton.addEventListener('click', async () => {
+    const category = selectedDashboardOption('categories', els.categoryManageSelect.value);
+    if (!category || !window.confirm(`Delete category ${category.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'category-delete',
+      categoryId: category.id,
+      confirm: category.id
+    }, { button: els.categoryDeleteButton });
+  });
+
+  els.roleRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'role-rename',
+      roleId: els.roleManageSelect.value,
+      name: els.roleManageNameInput.value
+    }, { button: els.roleRenameButton });
+  });
+
+  els.roleDeleteButton.addEventListener('click', async () => {
+    const role = selectedDashboardOption('roles', els.roleManageSelect.value);
+    if (!role || !window.confirm(`Delete @${role.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'role-delete',
+      roleId: role.id,
+      confirm: role.id
+    }, { button: els.roleDeleteButton });
+  });
 
   els.embedForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -688,6 +859,7 @@ function renderGuildDetail(detail) {
   renderTicketStats(detail);
   renderEmbedSender(detail);
   renderServerActions(guild);
+  renderServerControlCenter(detail);
   renderRestrictions(detail.activeRestrictions);
   renderCases(detail.recentCases);
   renderTicketPanelList(detail.ticketPanels);
@@ -1502,6 +1674,7 @@ function typeLabel(type) {
 }
 
 function choiceKindLabel(row) {
+  if (row?.key === 'invite_role_mappings') return 'Invite roles';
   const labels = {
     channel: 'Channel',
     'channel-list': 'Channels',
@@ -1521,6 +1694,7 @@ function choiceKindLabel(row) {
 function configChoiceLabel(row) {
   if (!row) return 'No setting selected';
   if (row.empty) return emptyChoiceLabel(row);
+  if (row.key === 'invite_role_mappings') return 'Invite role mappings saved';
   if (row.picker) {
     const options = state.guildDetail?.options?.[row.picker] || [];
     const labels = listConfigInputValues(row.value).map((id) => {
@@ -1540,6 +1714,7 @@ function configChoiceLabel(row) {
 }
 
 function emptyChoiceLabel(row) {
+  if (row?.key === 'invite_role_mappings') return 'Add invite roles';
   const labels = {
     channel: 'Choose a channel',
     'channel-list': 'Choose channels',
@@ -1589,6 +1764,123 @@ function configInputValue(value) {
   return String(value);
 }
 
+function renderServerControlCenter(detail) {
+  const categories = detail.options?.categories || [];
+  const channels = detail.options?.channels || [];
+  const roles = detail.options?.roles || [];
+
+  fillSelect(els.channelCreateCategorySelect, categories, 'No category', false);
+  fillSelect(els.channelManageSelect, channels, 'Choose a channel', true);
+  fillSelect(els.channelManageCategorySelect, categories, 'No category', false);
+  fillSelect(els.categoryManageSelect, categories, 'Choose a category', true);
+  fillSelect(els.roleManageSelect, roles, 'Choose a role', true);
+
+  if (document.activeElement !== els.serverNameInput) {
+    els.serverNameInput.value = detail.guild?.name || '';
+  }
+
+  els.serverControlStatus.textContent = `${formatNumber(channels.length)} channels - ${formatNumber(categories.length)} categories - ${formatNumber(roles.length)} roles`;
+  syncChannelManager();
+  syncCategoryManager();
+  syncRoleManager();
+}
+
+function syncChannelManager() {
+  const channel = selectedDashboardOption('channels', els.channelManageSelect.value);
+  const disabled = !channel;
+  els.channelManageNameInput.disabled = disabled;
+  els.channelManageCategorySelect.disabled = disabled;
+  els.channelManageTopicInput.disabled = disabled;
+  els.channelManageSlowmodeInput.disabled = disabled;
+  els.channelManageLockSelect.disabled = disabled;
+  els.channelRenameButton.disabled = disabled;
+  els.channelUpdateButton.disabled = disabled;
+  els.channelDeleteButton.disabled = disabled;
+  if (!channel) {
+    els.channelManageNameInput.value = '';
+    els.channelManageTopicInput.value = '';
+    els.channelManageSlowmodeInput.value = '0';
+    els.channelManageLockSelect.value = 'keep';
+    return;
+  }
+  if (document.activeElement !== els.channelManageNameInput) {
+    els.channelManageNameInput.value = channel.label || '';
+  }
+  if (document.activeElement !== els.channelManageTopicInput) {
+    els.channelManageTopicInput.value = channel.topic || '';
+  }
+  if (document.activeElement !== els.channelManageSlowmodeInput) {
+    els.channelManageSlowmodeInput.value = String(channel.slowmode || 0);
+  }
+  setSelectValue(els.channelManageCategorySelect, channel.parentId || '');
+  if (els.channelManageLockSelect.value !== 'lock' && els.channelManageLockSelect.value !== 'unlock') {
+    els.channelManageLockSelect.value = 'keep';
+  }
+}
+
+function syncCategoryManager() {
+  const category = selectedDashboardOption('categories', els.categoryManageSelect.value);
+  const disabled = !category;
+  els.categoryManageNameInput.disabled = disabled;
+  els.categoryRenameButton.disabled = disabled;
+  els.categoryDeleteButton.disabled = disabled;
+  if (!category) {
+    els.categoryManageNameInput.value = '';
+    return;
+  }
+  if (document.activeElement !== els.categoryManageNameInput) {
+    els.categoryManageNameInput.value = category.label || '';
+  }
+}
+
+function syncRoleManager() {
+  const role = selectedDashboardOption('roles', els.roleManageSelect.value);
+  const disabled = !role;
+  els.roleManageNameInput.disabled = disabled;
+  els.roleRenameButton.disabled = disabled;
+  els.roleDeleteButton.disabled = disabled;
+  if (!role) {
+    els.roleManageNameInput.value = '';
+    return;
+  }
+  if (document.activeElement !== els.roleManageNameInput) {
+    els.roleManageNameInput.value = role.label || '';
+  }
+}
+
+function selectedDashboardOption(type, id) {
+  return (state.guildDetail?.options?.[type] || []).find((item) => item.id === id) || null;
+}
+
+async function runSelectedGuildAction(payload, options = {}) {
+  if (!state.selectedGuildId) return null;
+  const button = options.button || null;
+  if (button) button.disabled = true;
+  if (els.serverControlStatus) els.serverControlStatus.textContent = 'Working...';
+  try {
+    const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/action`, {
+      method: 'POST',
+      body: payload
+    });
+    if (response.detail) {
+      state.guildDetail = response.detail;
+      renderGuildDetail(response.detail);
+    }
+    if (typeof options.onSuccess === 'function') options.onSuccess(response);
+    const message = response.message || `${payload.action} complete.`;
+    if (els.serverControlStatus) els.serverControlStatus.textContent = message;
+    showToast(message);
+    await loadOverview(false).catch(() => null);
+    return response;
+  } catch (err) {
+    if (els.serverControlStatus) els.serverControlStatus.textContent = err.message || 'Action failed.';
+    showToast(err.message || 'Server action failed.');
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function renderServerActions(guild) {
   els.serverActionBar.innerHTML = `
     <div class="action-group">
@@ -1605,20 +1897,7 @@ function renderServerActions(guild) {
 
   els.serverActionBar.querySelectorAll('[data-guild-action]').forEach((button) => {
     button.addEventListener('click', async () => {
-      button.disabled = true;
-      try {
-        const response = await request(`/api/guilds/${encodeURIComponent(guild.id)}/action`, {
-          method: 'POST',
-          body: { action: button.dataset.guildAction }
-        });
-        if (response.detail) {
-          state.guildDetail = response.detail;
-          renderGuildDetail(response.detail);
-        }
-        showToast(`${button.dataset.guildAction} updated ${response.updatedChannels || 0} channels.`);
-      } finally {
-        button.disabled = false;
-      }
+      await runSelectedGuildAction({ action: button.dataset.guildAction }, { button });
     });
   });
 

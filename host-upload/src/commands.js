@@ -28,6 +28,7 @@ const progression = require('./services/progression');
 const community = require('./services/community');
 const swat = require('./services/swat');
 const { createEmbedFromAI } = require('./services/ai');
+const inviteRoles = require('./services/inviteRoles');
 const { moderationLog } = require('./services/logger');
 
 const SETUP_CHANNELS = [
@@ -188,6 +189,7 @@ const SETUP_CLEAR_ITEMS = [
   ...SETUP_SINGLE_ROLES,
   ...SETUP_LISTS,
   { key: 'welcome_message', label: 'Welcome Message', description: 'Reset the welcome text template.' },
+  { key: 'invite_role_mappings', label: 'Invite Role Mappings', description: 'Remove all invite-to-role mappings.' },
   { key: 'sticky', label: 'Sticky Message', description: 'Delete the sticky message setting for this server.' }
 ];
 
@@ -228,7 +230,11 @@ const PREFIX_ALIASES = {
   stickymessage: 'sticky',
   channelrestriction: 'channel-restriction',
   masssynccategories: 'mass-sync-categories',
-  syncchannels: 'mass-sync-categories'
+  syncchannels: 'mass-sync-categories',
+  invite: 'invites',
+  invitescount: 'invites',
+  inviterole: 'invite-role',
+  inviteroles: 'invite-role'
 };
 
 const OWNER_ALIASES = {
@@ -272,7 +278,7 @@ const LOCKED_NORMAL_COMMANDS = new Set([
   'softban', 'mass-ban', 'purge', 'dm', 'say', 'lock', 'unlock', 'lockdown', 'unlockdown',
   'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user',
   'temp-role', 'temp-role-remove', 'set-nick', 'move', 'giveaway', 'steal-emoji',
-  'steal-sticker', 'embed-create'
+  'steal-sticker', 'embed-create', 'invite-role'
 ]);
 
 const ACTIVITY_TYPES = {
@@ -682,7 +688,35 @@ function slashCommands() {
           .addChannelOption((option) => option.setName('channel').setDescription('Q&A channel.').setRequired(true).addChannelTypes(ChannelType.GuildText))
           .addStringOption((option) => option.setName('personality').setDescription('How the bot should answer in Q&A.').setRequired(true))
       )
-      .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.'))
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.')),
+
+    new SlashCommandBuilder()
+      .setName('invite-role')
+      .setDescription('Give roles to members who join through specific invite codes.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Map an invite code or URL to a role.')
+          .addStringOption((option) => option.setName('invite').setDescription('Invite code or full invite URL.').setRequired(true))
+          .addRoleOption((option) => option.setName('role').setDescription('Role to give when this invite is used.').setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove an invite role mapping.')
+          .addStringOption((option) => option.setName('invite').setDescription('Invite code or full invite URL.').setRequired(true))
+      )
+      .addSubcommand((sub) => sub.setName('list').setDescription('List invite role mappings.')),
+
+    new SlashCommandBuilder()
+      .setName('invites')
+      .setDescription('Check your invite count, or a member invite count if you are a moderator.')
+      .addStringOption((option) => option.setName('action').setDescription('Check or reset tracked invites.').addChoices(
+        { name: 'check', value: 'check' },
+        { name: 'reset', value: 'reset' }
+      ))
+      .addUserOption((option) => option.setName('user').setDescription('Member to check/reset. Moderators only for other members.'))
+      .addBooleanOption((option) => option.setName('all').setDescription('Reset all tracked invite stats. Moderator only.'))
   ];
 
   return commands.map((command) => command.toJSON());
@@ -1589,7 +1623,9 @@ async function handleSlash(interaction, db, client) {
       case 'mass-sync-categories':
       case 'bump':
       case 'pet':
-      case 'qna': {
+      case 'qna':
+      case 'invite-role':
+      case 'invites': {
         await handleCommunitySlash(interaction, db);
         break;
       }
@@ -2216,8 +2252,247 @@ function channelIdsFromText(text) {
     .filter(Boolean);
 }
 
+function validateInviteRole(guild, role) {
+  if (!role || role.id === guild.id) throw new Error('Choose a real role for this invite.');
+  if (role.managed) throw new Error('Managed roles can not be assigned by invite.');
+  if (role.editable === false) {
+    throw new Error('Move the bot role above that role before using it for invite roles.');
+  }
+}
+
+function inviteRoleStatusEmbed(db, guild, title = 'Invite Roles') {
+  const mappings = inviteRoles.listInviteRoleMappings(db, guild.id);
+  return buildEmbed(db, guild.id, {
+    title,
+    description: inviteRoles.formatInviteRoleMappings(guild, mappings),
+    fields: [
+      {
+        name: 'Requirement',
+        value: 'The bot needs **Manage Server** permission so it can read invite usage.'
+      }
+    ],
+    style: 'emerald'
+  });
+}
+
+async function inviteUsageForUser(guild, userId) {
+  const me = guild.members.me;
+  if (me?.permissions && !me.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+    return { available: false, total: 0, codes: [] };
+  }
+  const invites = await guild.invites.fetch().catch(() => null);
+  if (!invites) return { available: false, total: 0, codes: [] };
+
+  const codes = [...invites.values()]
+    .filter((invite) => invite.inviter?.id === userId)
+    .map((invite) => ({
+      code: invite.code,
+      uses: Number(invite.uses || 0)
+    }))
+    .sort((a, b) => b.uses - a.uses || a.code.localeCompare(b.code));
+
+  return {
+    available: true,
+    total: codes.reduce((sum, item) => sum + item.uses, 0),
+    codes
+  };
+}
+
+async function inviteStatsEmbed(db, guild, targetUser) {
+  const tracked = db.inviteStats(guild.id, targetUser.id, 10);
+  const current = await inviteUsageForUser(guild, targetUser.id);
+  const activeTracked = tracked.recent.filter((row) => guild.members.cache.has(row.member_id)).length;
+  const codeLines = tracked.codes.length
+    ? tracked.codes.slice(0, 8).map((row) => `\`${row.invite_code || 'unknown'}\`: ${row.count}`).join('\n')
+    : 'No tracked invite joins yet.';
+  const currentLines = current.available
+    ? (current.codes.length
+        ? current.codes.slice(0, 8).map((row) => `\`${row.code}\`: ${row.uses}`).join('\n')
+        : 'No active invite links owned by this member.')
+    : 'Unavailable. The bot needs Manage Server permission to read invite uses.';
+  const recentLines = tracked.recent.length
+    ? tracked.recent.slice(0, 6).map((row) => `<@${row.member_id}> via \`${row.invite_code || 'unknown'}\` <t:${Math.floor(row.joined_at / 1000)}:R>`).join('\n')
+    : 'No tracked joins yet.';
+
+  return buildEmbed(db, guild.id, {
+    title: `Invites - ${targetUser.tag || targetUser.username || targetUser.id}`,
+    description: [
+      `Tracked joins: **${tracked.total}**`,
+      `Recent tracked members still cached: **${activeTracked}/${tracked.recent.length}**`,
+      current.available ? `Current active invite uses: **${current.total}**` : 'Current active invite uses: **Unavailable**'
+    ].join('\n'),
+    fields: [
+      { name: 'Tracked by code', value: codeLines },
+      { name: 'Current active links', value: currentLines },
+      { name: 'Recent tracked joins', value: recentLines }
+    ],
+    style: 'ocean'
+  });
+}
+
+async function handleInvitesSlash(interaction, db) {
+  const action = interaction.options.getString('action') || 'check';
+  const resetAll = Boolean(interaction.options.getBoolean('all'));
+  const targetUser = interaction.options.getUser('user') || interaction.user;
+
+  if (action === 'reset') {
+    requireModerator(db, interaction.member);
+    const deleted = resetAll
+      ? db.resetInviteStats(interaction.guild.id)
+      : db.resetInviteStats(interaction.guild.id, targetUser.id);
+    await reply(interaction, {
+      embeds: [
+        success(
+          db,
+          interaction.guild.id,
+          resetAll
+            ? `Reset all tracked invite stats. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`
+            : `Reset tracked invite stats for ${targetUser}. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`
+        )
+      ]
+    }, true);
+    return;
+  }
+
+  if (targetUser.id !== interaction.user.id) requireModerator(db, interaction.member);
+  await reply(interaction, {
+    embeds: [await inviteStatsEmbed(db, interaction.guild, targetUser)]
+  }, true);
+}
+
+async function handleInvitesPrefix(message, db, client, args) {
+  const action = String(args[0] || 'check').toLowerCase();
+  if (['reset', 'clear'].includes(action)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const targetRaw = args[0];
+    if (String(targetRaw || '').toLowerCase() === 'all') {
+      const deleted = db.resetInviteStats(message.guild.id);
+      await message.reply({
+        embeds: [success(db, message.guild.id, `Reset all tracked invite stats. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`)]
+      });
+      return;
+    }
+    const targetUser = targetRaw
+      ? await resolveUser(client, message.guild, targetRaw)
+      : message.author;
+    if (!targetUser) throw new Error('User not found.');
+    const deleted = db.resetInviteStats(message.guild.id, targetUser.id);
+    await message.reply({
+      embeds: [success(db, message.guild.id, `Reset tracked invite stats for ${targetUser}. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`)]
+    });
+    return;
+  }
+
+  const targetRaw = action === 'check' ? args[1] : args[0];
+  const targetUser = targetRaw
+    ? await resolveUser(client, message.guild, targetRaw)
+    : message.author;
+  if (!targetUser) throw new Error('User not found.');
+  if (targetUser.id !== message.author.id) requireModerator(db, message.member);
+  await message.reply({
+    embeds: [await inviteStatsEmbed(db, message.guild, targetUser)]
+  });
+}
+
+async function handleInviteRoleSlash(interaction, db) {
+  requireModerator(db, interaction.member);
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === 'add') {
+    const invite = interaction.options.getString('invite');
+    const role = interaction.options.getRole('role');
+    validateInviteRole(interaction.guild, role);
+    const result = inviteRoles.setInviteRoleMapping(db, interaction.guild.id, invite, role.id);
+    await reply(interaction, {
+      embeds: [
+        success(
+          db,
+          interaction.guild.id,
+          `${result.replaced ? 'Updated' : 'Added'} invite \`${result.mapping.code}\` -> ${role}.`
+        )
+      ]
+    }, true);
+    return;
+  }
+
+  if (sub === 'remove') {
+    const invite = interaction.options.getString('invite');
+    const result = inviteRoles.removeInviteRoleMapping(db, interaction.guild.id, invite);
+    await reply(interaction, {
+      embeds: [
+        result.removed
+          ? success(db, interaction.guild.id, `Removed invite role mapping for \`${result.code}\`.`)
+          : buildEmbed(db, interaction.guild.id, {
+              title: 'Invite Role',
+              description: `No mapping was found for \`${result.code}\`.`,
+              style: 'amber'
+            })
+      ]
+    }, true);
+    return;
+  }
+
+  await reply(interaction, { embeds: [inviteRoleStatusEmbed(db, interaction.guild)] }, true);
+}
+
+async function handleInviteRolePrefix(message, db, args) {
+  requireModerator(db, message.member);
+  const sub = String(args.shift() || 'list').toLowerCase();
+
+  if (sub === 'add' || sub === 'set') {
+    const invite = args.shift();
+    const roleId = idFromMention(args.shift());
+    const role = roleId ? await message.guild.roles.fetch(roleId).catch(() => null) : null;
+    validateInviteRole(message.guild, role);
+    const result = inviteRoles.setInviteRoleMapping(db, message.guild.id, invite, role.id);
+    await message.reply({
+      embeds: [
+        success(
+          db,
+          message.guild.id,
+          `${result.replaced ? 'Updated' : 'Added'} invite \`${result.mapping.code}\` -> ${role}.`
+        )
+      ]
+    });
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'delete') {
+    const result = inviteRoles.removeInviteRoleMapping(db, message.guild.id, args.shift());
+    await message.reply({
+      embeds: [
+        result.removed
+          ? success(db, message.guild.id, `Removed invite role mapping for \`${result.code}\`.`)
+          : buildEmbed(db, message.guild.id, {
+              title: 'Invite Role',
+              description: `No mapping was found for \`${result.code}\`.`,
+              style: 'amber'
+            })
+      ]
+    });
+    return;
+  }
+
+  if (sub !== 'list' && sub !== 'status') {
+    throw new Error('Usage: r!invite-role add discord.gg/code @role, r!invite-role remove code, or r!invite-role list');
+  }
+
+  await message.reply({ embeds: [inviteRoleStatusEmbed(db, message.guild)] });
+}
+
 async function handleCommunitySlash(interaction, db) {
   const name = interaction.commandName;
+
+  if (name === 'invites') {
+    await handleInvitesSlash(interaction, db);
+    return;
+  }
+
+  if (name === 'invite-role') {
+    await handleInviteRoleSlash(interaction, db);
+    return;
+  }
 
   if (name === 'verification') {
     requireModerator(db, interaction.member);
@@ -2364,9 +2639,9 @@ const HELP_SECTIONS = [
     id: 'systems',
     label: 'Server Systems',
     lines: [
-      '`verification setup #channel @role [message]`, `qna setup #channel personality`',
-      '`sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`, `snipe`, `first-message`',
-      '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, and Q&A settings.'
+      '`verification setup #channel @role [message]`, `qna setup #channel personality`, `invite-role add invite @role`',
+      '`invites [member]`, `invites reset [member|all]`, `sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`',
+      '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, invite roles, and Q&A settings.'
     ]
   },
   {
@@ -3321,6 +3596,16 @@ async function handlePrefixCommand(message, db, client, command, args) {
         })
       ]
     });
+    return;
+  }
+
+  if (command === 'invite-role') {
+    await handleInviteRolePrefix(message, db, args);
+    return;
+  }
+
+  if (command === 'invites') {
+    await handleInvitesPrefix(message, db, client, args);
     return;
   }
 

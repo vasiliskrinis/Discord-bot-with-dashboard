@@ -1347,6 +1347,46 @@ body {
   max-width: 240px;
 }
 
+.server-control-panel {
+  overflow: hidden;
+}
+
+.server-control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.control-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.control-card h3 {
+  margin: 0 0 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.compact-card {
+  align-content: start;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.button-row button {
+  width: 100%;
+  margin-top: 0;
+}
+
 .mini-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1530,6 +1570,7 @@ body {
 
   .action-bar,
   .control-form,
+  .server-control-grid,
   .backup-actions,
   .mini-grid {
     grid-template-columns: 1fr;
@@ -1537,9 +1578,15 @@ body {
 
   .action-group,
   .danger-group,
+  .button-row,
   .modal-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .button-row {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .danger-group input {
@@ -2469,6 +2516,7 @@ textarea {
   .commands-hero,
   .commands-layout,
   .compact-stats,
+  .server-control-grid,
   .tickets-workspace {
     grid-template-columns: 1fr;
   }
@@ -2506,6 +2554,7 @@ textarea {
 .action-bar,
 .ticket-panel-row,
 .command-card,
+.control-card,
 .mini-card {
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
@@ -2523,6 +2572,7 @@ textarea {
 .server-header:hover,
 .ticket-panel-row:hover,
 .command-card:hover,
+.control-card:hover,
 .mini-card:hover {
   border-color: rgba(49, 198, 178, 0.34);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
@@ -2530,6 +2580,7 @@ textarea {
 
 .stat-card:hover,
 .command-card:hover,
+.control-card:hover,
 .ticket-panel-row:hover {
   transform: translateY(-1px);
 }

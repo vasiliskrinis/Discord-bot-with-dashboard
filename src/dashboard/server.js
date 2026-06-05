@@ -19,6 +19,7 @@ const { EMBED_STYLES, buildEmbed } = require('../embeds');
 const { slashCommands } = require('../commands');
 const community = require('../services/community');
 const dashboardControlResponses = require('../services/dashboardControls');
+const inviteRoles = require('../services/inviteRoles');
 const ticketService = require('../services/tickets');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
@@ -35,6 +36,14 @@ const MIME_TYPES = {
 };
 
 const STATIC_FILES = new Set(['app.js', 'index.html', 'styles.css']);
+const CHANNEL_CREATE_TYPES = {
+  text: ChannelType.GuildText,
+  voice: ChannelType.GuildVoice,
+  announcement: ChannelType.GuildAnnouncement,
+  forum: ChannelType.GuildForum,
+  stage: ChannelType.GuildStageVoice
+};
+const CHANNEL_TYPE_NAMES = Object.fromEntries(Object.entries(CHANNEL_CREATE_TYPES).map(([key, value]) => [value, key]));
 
 const ACTIVITY_TYPES = {
   playing: ActivityType.Playing,
@@ -112,6 +121,7 @@ const CONFIG_LABELS = {
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
   welcome_message: 'Welcome message',
+  invite_role_mappings: 'Invite role mappings',
   level_announce_channel: 'Level announcements channel',
   member_count_voice: 'Member count voice channel',
   embed_style: 'Embed style',
@@ -615,7 +625,7 @@ function configInputType(key) {
   if (NUMBER_CONFIG_KEYS.has(key)) return 'number';
   if (key === 'embed_style') return 'style';
   if (key === 'anti_raid_action') return 'action';
-  if (key === 'sticky' || key === 'role_level_rewards') return 'json';
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings') return 'json';
   if (key === 'welcome_message') return 'message';
   return 'text';
 }
@@ -641,6 +651,7 @@ function guildPickerOptions(client, guild) {
         color: role.hexColor && role.hexColor !== '#000000' ? role.hexColor : null,
         managed: Boolean(role.managed)
       })),
+    channels: channelOptions(guild, isManageableGuildChannel),
     textChannels: channelOptions(guild, (channel) => channel?.isTextBased?.()),
     voiceChannels: channelOptions(guild, (channel) => channel.type === ChannelType.GuildVoice),
     users: [...(guild.members?.cache?.values?.() || [])]
@@ -676,8 +687,21 @@ function channelOptions(guild, predicate) {
       id: channel.id,
       label: channel.name,
       detail: channelTypeLabel(channel.type),
-      parentId: channel.parentId || null
+      parentId: channel.parentId || null,
+      topic: channel.topic || '',
+      slowmode: Number(channel.rateLimitPerUser || 0),
+      type: CHANNEL_TYPE_NAMES[channel.type] || channelTypeLabel(channel.type).toLowerCase()
     }));
+}
+
+function isManageableGuildChannel(channel) {
+  return [
+    ChannelType.GuildText,
+    ChannelType.GuildVoice,
+    ChannelType.GuildAnnouncement,
+    ChannelType.GuildForum,
+    ChannelType.GuildStageVoice
+  ].includes(channel?.type);
 }
 
 function categoryOptions(guild) {
@@ -1247,7 +1271,198 @@ async function runGuildAction(client, db, guildId, body) {
   if (!guild) throw httpError(404, 'Guild not found.');
   const action = String(body.action || '').trim().toLowerCase();
 
+  if (action === 'server-rename') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageGuild, 'Manage Server');
+    const name = cleanName(body.name, 'Server name', 2, 100);
+    await guild.setName(name, 'Dashboard server rename');
+    return {
+      action,
+      message: `Renamed server to ${name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'channel-create') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const name = cleanName(body.name, 'Channel name', 1, 100);
+    const type = channelCreateType(body.channelType);
+    const options = {
+      name,
+      type,
+      reason: 'Dashboard channel create'
+    };
+    const parentId = emptyToNull(body.parentId);
+    if (parentId) options.parent = requireCategory(guild, parentId).id;
+    const topic = cleanOptionalText(body.topic, 1024);
+    if (topic && [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum].includes(type)) {
+      options.topic = topic;
+    }
+    const slowmode = boundedInteger(body.slowmode, 0, 21600, 0);
+    if (type === ChannelType.GuildText || type === ChannelType.GuildAnnouncement) {
+      options.rateLimitPerUser = slowmode;
+    }
+    const channel = await guild.channels.create(options);
+    return {
+      action,
+      resource: channelResource(channel),
+      message: `Created ${channelTypeLabel(type).toLowerCase()} channel #${channel.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'channel-rename') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const channel = requireGuildChannel(guild, body.channelId);
+    const name = cleanName(body.name, 'Channel name', 1, 100);
+    await channel.setName(name, 'Dashboard channel rename');
+    return {
+      action,
+      resource: channelResource(channel),
+      message: `Renamed channel to #${name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'channel-update') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const channel = requireGuildChannel(guild, body.channelId);
+    const changes = [];
+    const parentId = emptyToNull(body.parentId);
+    if (Object.prototype.hasOwnProperty.call(body, 'parentId') && channel.type !== ChannelType.GuildCategory) {
+      if (parentId) {
+        await channel.setParent(requireCategory(guild, parentId).id, { lockPermissions: false, reason: 'Dashboard channel category update' });
+        changes.push('category');
+      } else if (channel.parentId) {
+        await channel.setParent(null, { lockPermissions: false, reason: 'Dashboard channel category clear' });
+        changes.push('category');
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'topic') && typeof channel.setTopic === 'function') {
+      await channel.setTopic(cleanOptionalText(body.topic, 1024), 'Dashboard channel topic update');
+      changes.push('topic');
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'slowmode') && typeof channel.setRateLimitPerUser === 'function') {
+      const seconds = boundedInteger(body.slowmode, 0, 21600, 0);
+      await channel.setRateLimitPerUser(seconds, 'Dashboard channel slowmode update');
+      changes.push('slowmode');
+    }
+    const lockState = String(body.lockState || 'keep').trim().toLowerCase();
+    if (['lock', 'unlock'].includes(lockState)) {
+      await channel.permissionOverwrites.edit(guild.id, { SendMessages: lockState === 'lock' ? false : null }, { reason: `Dashboard channel ${lockState}` });
+      changes.push(lockState);
+    }
+    return {
+      action,
+      resource: channelResource(channel),
+      message: changes.length ? `Updated #${channel.name}: ${changes.join(', ')}.` : `No changes applied to #${channel.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'channel-delete') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const channel = requireGuildChannel(guild, body.channelId);
+    requireDeleteConfirm(body.confirm, channel.id, channel.name);
+    const resource = channelResource(channel);
+    await channel.delete('Dashboard channel delete');
+    return {
+      action,
+      resource,
+      message: `Deleted #${resource.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'category-create') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const name = cleanName(body.name, 'Category name', 1, 100);
+    const category = await guild.channels.create({
+      name,
+      type: ChannelType.GuildCategory,
+      reason: 'Dashboard category create'
+    });
+    return {
+      action,
+      resource: channelResource(category),
+      message: `Created category ${category.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'category-rename') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = requireCategory(guild, body.categoryId);
+    const name = cleanName(body.name, 'Category name', 1, 100);
+    await category.setName(name, 'Dashboard category rename');
+    return {
+      action,
+      resource: channelResource(category),
+      message: `Renamed category to ${name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'category-delete') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = requireCategory(guild, body.categoryId);
+    requireDeleteConfirm(body.confirm, category.id, category.name);
+    const resource = channelResource(category);
+    await category.delete('Dashboard category delete');
+    return {
+      action,
+      resource,
+      message: `Deleted category ${resource.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'role-create') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const name = cleanName(body.name, 'Role name', 1, 100);
+    const role = await guild.roles.create({
+      name,
+      color: colorValue(body.color),
+      hoist: Boolean(body.hoist),
+      mentionable: Boolean(body.mentionable),
+      reason: 'Dashboard role create'
+    });
+    return {
+      action,
+      resource: roleResource(role),
+      message: `Created role @${role.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'role-rename') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = requireEditableRole(guild, body.roleId);
+    const name = cleanName(body.name, 'Role name', 1, 100);
+    await role.setName(name, 'Dashboard role rename');
+    return {
+      action,
+      resource: roleResource(role),
+      message: `Renamed role to @${name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
+  if (action === 'role-delete') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = requireEditableRole(guild, body.roleId);
+    requireDeleteConfirm(body.confirm, role.id, role.name);
+    const resource = roleResource(role);
+    await role.delete('Dashboard role delete');
+    return {
+      action,
+      resource,
+      message: `Deleted role @${resource.name}.`,
+      detail: guildDetailPayload(client, db, guild.id)
+    };
+  }
+
   if (action === 'lockdown' || action === 'unlockdown') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
     const deny = action === 'lockdown' ? false : null;
     let count = 0;
     for (const channel of guild.channels?.cache?.values?.() || []) {
@@ -1264,6 +1479,7 @@ async function runGuildAction(client, db, guildId, body) {
   }
 
   if (action === 'channel-restriction') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
     const result = await community.applyChannelRestriction(db, guild, db.getConfig(guild.id, 'restriction_exempt_channels', []));
     return {
       action,
@@ -1274,6 +1490,7 @@ async function runGuildAction(client, db, guildId, body) {
   }
 
   if (action === 'mass-sync-categories') {
+    requireGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
     const result = await community.massSyncCategoryPermissions(guild);
     return {
       action,
@@ -1284,6 +1501,102 @@ async function runGuildAction(client, db, guildId, body) {
   }
 
   throw httpError(400, 'Unknown server action.');
+}
+
+function requireGuildPermission(guild, permission, label) {
+  const me = guild.members?.me;
+  if (!me?.permissions?.has?.(permission)) {
+    throw httpError(403, `Bot needs ${label} permission for this action.`);
+  }
+}
+
+function cleanName(value, label, min, max) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (text.length < min) throw httpError(400, `${label} is required.`);
+  if (text.length > max) throw httpError(400, `${label} must be ${max} characters or less.`);
+  return text;
+}
+
+function cleanOptionalText(value, max) {
+  const text = String(value || '').trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+function emptyToNull(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function boundedInteger(value, min, max, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function channelCreateType(value) {
+  const key = String(value || 'text').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(CHANNEL_CREATE_TYPES, key)) {
+    throw httpError(400, 'Unknown channel type.');
+  }
+  return CHANNEL_CREATE_TYPES[key];
+}
+
+function requireGuildChannel(guild, channelId) {
+  const channel = guild.channels?.cache?.get?.(String(channelId || '').trim());
+  if (!channel || !isManageableGuildChannel(channel)) {
+    throw httpError(404, 'Channel not found.');
+  }
+  return channel;
+}
+
+function requireCategory(guild, categoryId) {
+  const category = guild.channels?.cache?.get?.(String(categoryId || '').trim());
+  if (!category || category.type !== ChannelType.GuildCategory) {
+    throw httpError(404, 'Category not found.');
+  }
+  return category;
+}
+
+function requireEditableRole(guild, roleId) {
+  const role = guild.roles?.cache?.get?.(String(roleId || '').trim());
+  if (!role || role.id === guild.id) throw httpError(404, 'Role not found.');
+  if (role.managed) throw httpError(400, 'Managed roles cannot be changed from the dashboard.');
+  if (role.editable === false) throw httpError(403, 'Move the bot role above this role before changing it.');
+  return role;
+}
+
+function requireDeleteConfirm(confirm, expectedId, name) {
+  const value = String(confirm || '').trim();
+  if (value !== expectedId) {
+    throw httpError(400, `Confirm delete for ${name} by sending its exact ID.`);
+  }
+}
+
+function channelResource(channel) {
+  return {
+    id: channel.id,
+    name: channel.name,
+    type: CHANNEL_TYPE_NAMES[channel.type] || channelTypeLabel(channel.type),
+    parentId: channel.parentId || null
+  };
+}
+
+function roleResource(role) {
+  return {
+    id: role.id,
+    name: role.name,
+    color: role.hexColor || null,
+    hoist: Boolean(role.hoist),
+    mentionable: Boolean(role.mentionable)
+  };
+}
+
+function colorValue(value) {
+  const text = String(value || '').trim();
+  if (!text) return undefined;
+  if (/^#[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(1), 16);
+  if (/^0x[0-9a-f]{6}$/i.test(text)) return Number.parseInt(text.slice(2), 16);
+  throw httpError(400, 'Role color must be a hex color.');
 }
 
 async function leaveGuildFromDashboard(client, db, guildId, body) {
@@ -1404,12 +1717,20 @@ function normalizeConfigValue(key, value) {
     return ['restrict', 'kick', 'timeout', 'log'].includes(action) ? action : DEFAULT_GUILD_CONFIG.anti_raid_action;
   }
 
-  if (key === 'sticky' || key === 'role_level_rewards') {
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings') {
     if (key === 'role_level_rewards' && !value) return [];
+    if (key === 'invite_role_mappings' && !value) return [];
     if (!value) return null;
-    if (typeof value === 'object') return value;
+    if (typeof value === 'object') {
+      return key === 'invite_role_mappings'
+        ? inviteRoles.normalizeInviteRoleMappings(value)
+        : value;
+    }
     try {
-      return JSON.parse(String(value));
+      const parsed = JSON.parse(String(value));
+      return key === 'invite_role_mappings'
+        ? inviteRoles.normalizeInviteRoleMappings(parsed)
+        : parsed;
     } catch {
       throw httpError(400, `${CONFIG_LABELS[key] || key} must be valid JSON.`);
     }
@@ -1510,6 +1831,11 @@ function displayConfigValue(client, guild, key, value) {
   }
   if (key === 'sticky') {
     return value?.channelId ? `${channelLabel(guild, value.channelId)} - ${value.message || 'Sticky message'}` : JSON.stringify(value);
+  }
+  if (key === 'invite_role_mappings') {
+    return inviteRoles.normalizeInviteRoleMappings(value)
+      .map((mapping) => `${mapping.code} -> ${roleLabel(guild, mapping.roleId)}`)
+      .join(', ');
   }
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
