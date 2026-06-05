@@ -1,5 +1,6 @@
 const {
   AuditLogEvent,
+  AttachmentBuilder,
   Client,
   Events,
   GatewayIntentBits,
@@ -14,6 +15,7 @@ const { isBotOwner, isGuildModerator } = require('./permissions');
 const ai = require('./services/ai');
 const prompts = require('./services/prompts');
 const progression = require('./services/progression');
+const cards = require('./services/cards');
 const community = require('./services/community');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
@@ -95,6 +97,7 @@ function attachClientEvents(client, botIndex) {
     if (await handleBotAddGuard(member, client).catch(() => false)) return;
     const usedInvite = await detectUsedInvite(member.guild).catch(() => null);
     recordInviteJoin(member, usedInvite);
+    if (!member.user.bot) await handleInviteCountRoles(member.guild, usedInvite).catch(() => null);
     const reRestricted = await restrictions.reapplyRestrictionOnJoin(db, member).catch(() => false);
     if (!reRestricted) {
       await handleAutoRole(member).catch(() => null);
@@ -202,6 +205,10 @@ function attachClientEvents(client, botIndex) {
         if (await commands.handlePrefixMessage(message, db, client)) return;
       }
 
+      if (reserveMessageResponse(message, 'swat-roleplay')) {
+        if (await swat.handleSwatRoleplayMessage(message, db)) return;
+      }
+
       if (reserveMessageResponse(message, 'activity')) {
         await progression.awardMessageActivity(db, message).catch(() => null);
       }
@@ -277,6 +284,10 @@ function attachClientEvents(client, botIndex) {
         }
         if (interaction.customId.startsWith('verify:')) {
           await community.handleVerifyButton(db, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith('progress:')) {
+          await progression.handleProgressButton(db, interaction);
           return;
         }
         if (interaction.customId.startsWith('dashboard:')) {
@@ -629,6 +640,7 @@ async function handleQnaMessage(message) {
     }),
     systemSuffix: [
       'Answer as the configured Q&A helper for this server with broad general knowledge.',
+      'Treat the Q&A personality as mandatory server-specific instructions for tone, style, and boundaries.',
       'Use the provided one-message memory or referenced Discord message to understand follow-ups.',
       'Be accurate and concise. If live/current facts are needed, say that you cannot verify them from Discord alone.',
       'Do not mention everyone, here, users, or roles.'
@@ -810,6 +822,76 @@ async function handleInviteRole(member, usedInvite) {
   }).catch(() => null);
 }
 
+async function handleInviteCountRoles(guild, usedInvite) {
+  const inviterId = usedInvite?.inviterId;
+  if (!guild || !inviterId) return;
+
+  const inviter = await guild.members.fetch(inviterId).catch(() => null);
+  if (!inviter || inviter.user?.bot) return;
+
+  const inviteCount = inviteCountForInviter(guild.id, inviterId);
+  const rewards = inviteRoles.inviteCountRoleRewardsForCount(db, guild.id, inviteCount);
+  if (!rewards.length) return;
+
+  const granted = [];
+  for (const reward of rewards) {
+    if (inviter.roles.cache.has(reward.roleId)) continue;
+    const role = await guild.roles.fetch(reward.roleId).catch(() => null);
+    if (!role || role.managed || role.id === guild.id) {
+      await systemLog(db, guild, 'security', {
+        title: 'Invite Count Role Failed',
+        target: inviter.user,
+        fields: [
+          { name: 'Invite Count', value: String(inviteCount), inline: true },
+          { name: 'Reward', value: `${reward.invites} invite${reward.invites === 1 ? '' : 's'}`, inline: true },
+          { name: 'Role', value: `<@&${reward.roleId}>`, inline: true },
+          { name: 'Reason', value: 'Role is missing, managed, or invalid.' }
+        ],
+        style: 'amber'
+      }).catch(() => null);
+      continue;
+    }
+
+    const assigned = await inviter.roles.add(role, `Invite count reward for ${reward.invites} invites`)
+      .then(() => true)
+      .catch(async (err) => {
+        await systemLog(db, guild, 'security', {
+          title: 'Invite Count Role Failed',
+          target: inviter.user,
+          fields: [
+            { name: 'Invite Count', value: String(inviteCount), inline: true },
+            { name: 'Reward', value: `${reward.invites} invite${reward.invites === 1 ? '' : 's'}`, inline: true },
+            { name: 'Role', value: `${role}`, inline: true },
+            { name: 'Reason', value: err.message || 'Role assignment failed. Check bot permissions and role position.' }
+          ],
+          style: 'amber'
+        }).catch(() => null);
+        return false;
+      });
+    if (assigned) granted.push(`${role} at ${reward.invites}`);
+  }
+
+  if (!granted.length) return;
+  await systemLog(db, guild, 'member', {
+    title: 'Invite Count Role Assigned',
+    target: inviter.user,
+    fields: [
+      { name: 'Inviter', value: `${inviter.user} (${inviter.id})`, inline: true },
+      { name: 'Invite Count', value: String(inviteCount), inline: true },
+      { name: 'Rewards', value: granted.join('\n').slice(0, 1024) }
+    ],
+    style: 'emerald'
+  }).catch(() => null);
+}
+
+function inviteCountForInviter(guildId, inviterId) {
+  const tracked = db.inviteStats(guildId, inviterId, 1).total || 0;
+  const active = [...(inviteSnapshots.get(guildId)?.values?.() || [])]
+    .filter((invite) => invite.inviterId === inviterId)
+    .reduce((sum, invite) => sum + Number(invite.uses || 0), 0);
+  return Math.max(tracked, active);
+}
+
 function recordInviteJoin(member, usedInvite) {
   if (member.user.bot || !usedInvite?.code) return;
   db.recordInviteJoin(member.guild.id, member.id, usedInvite.inviterId, usedInvite.code, Date.now());
@@ -949,15 +1031,26 @@ async function sendWelcome(member) {
     .replaceAll('{user}', `${member}`)
     .replaceAll('{server}', member.guild.name)
     .replaceAll('{memberCount}', String(member.guild.memberCount));
+  const imageName = `welcome-${member.id}.svg`;
+  const image = cards.welcomeCard({
+    username: member.user.username || member.user.tag,
+    memberCount: member.guild.memberCount
+  });
   await channel.send({
+    content: `${member}`,
     embeds: [
       buildEmbed(db, member.guild.id, {
         title: 'Welcome',
         description,
+        image: `attachment://${imageName}`,
         thumbnail: member.user.displayAvatarURL(),
         style: 'emerald'
       })
-    ]
+    ],
+    files: [
+      new AttachmentBuilder(Buffer.from(image), { name: imageName })
+    ],
+    allowedMentions: { users: [member.id] }
   });
 }
 

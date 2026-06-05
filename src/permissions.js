@@ -19,9 +19,16 @@ function isConfiguredAdmin(db, member) {
   return adminUsers.includes(member.id) || memberHasAnyRole(member, adminRoles);
 }
 
-function isGuildModerator(db, member) {
+function isGuildAdmin(db, member) {
   if (!member?.guild) return false;
   if (isConfiguredAdmin(db, member)) return true;
+  if (member.id === member.guild.ownerId) return true;
+  return member.permissions.has(PermissionsBitField.Flags.Administrator);
+}
+
+function isGuildModerator(db, member) {
+  if (!member?.guild) return false;
+  if (isGuildAdmin(db, member)) return true;
   return member.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
     member.permissions.has(PermissionsBitField.Flags.ModerateMembers) ||
     member.permissions.has(PermissionsBitField.Flags.KickMembers) ||
@@ -54,6 +61,12 @@ function requireModerator(db, member) {
   }
 }
 
+function requireAdmin(db, member) {
+  if (!isGuildAdmin(db, member)) {
+    throw new Error('You need Administrator permission or configured admin access.');
+  }
+}
+
 function requireRestrict(db, member) {
   if (!canRestrict(db, member)) {
     throw new Error('You need the configured restrict permissions role or moderator access.');
@@ -71,10 +84,12 @@ function manageable(member, targetMember) {
 module.exports = {
   isBotOwner,
   isConfiguredAdmin,
+  isGuildAdmin,
   isGuildModerator,
   canRestrict,
   canUseRestrictButtons,
   requireBotOwner,
+  requireAdmin,
   requireModerator,
   requireRestrict,
   manageable

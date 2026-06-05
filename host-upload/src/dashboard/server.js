@@ -65,6 +65,7 @@ const CHANNEL_CONFIG_KEYS = new Set([
   'qna_channel',
   'counting_channel',
   'welcome_channel',
+  'achievement_channel',
   'level_announce_channel',
   'member_count_voice'
 ]);
@@ -121,7 +122,9 @@ const CONFIG_LABELS = {
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
   welcome_message: 'Welcome message',
+  achievement_channel: 'Achievement channel',
   invite_role_mappings: 'Invite role mappings',
+  invite_count_role_rewards: 'Invite count role rewards',
   level_announce_channel: 'Level announcements channel',
   member_count_voice: 'Member count voice channel',
   embed_style: 'Embed style',
@@ -625,7 +628,7 @@ function configInputType(key) {
   if (NUMBER_CONFIG_KEYS.has(key)) return 'number';
   if (key === 'embed_style') return 'style';
   if (key === 'anti_raid_action') return 'action';
-  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings') return 'json';
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards') return 'json';
   if (key === 'welcome_message') return 'message';
   return 'text';
 }
@@ -1717,20 +1720,21 @@ function normalizeConfigValue(key, value) {
     return ['restrict', 'kick', 'timeout', 'log'].includes(action) ? action : DEFAULT_GUILD_CONFIG.anti_raid_action;
   }
 
-  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings') {
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards') {
     if (key === 'role_level_rewards' && !value) return [];
     if (key === 'invite_role_mappings' && !value) return [];
+    if (key === 'invite_count_role_rewards' && !value) return [];
     if (!value) return null;
     if (typeof value === 'object') {
-      return key === 'invite_role_mappings'
-        ? inviteRoles.normalizeInviteRoleMappings(value)
-        : value;
+      if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(value);
+      if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(value);
+      return value;
     }
     try {
       const parsed = JSON.parse(String(value));
-      return key === 'invite_role_mappings'
-        ? inviteRoles.normalizeInviteRoleMappings(parsed)
-        : parsed;
+      if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(parsed);
+      if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(parsed);
+      return parsed;
     } catch {
       throw httpError(400, `${CONFIG_LABELS[key] || key} must be valid JSON.`);
     }
@@ -1835,6 +1839,11 @@ function displayConfigValue(client, guild, key, value) {
   if (key === 'invite_role_mappings') {
     return inviteRoles.normalizeInviteRoleMappings(value)
       .map((mapping) => `${mapping.code} -> ${roleLabel(guild, mapping.roleId)}`)
+      .join(', ');
+  }
+  if (key === 'invite_count_role_rewards') {
+    return inviteRoles.normalizeInviteCountRoleRewards(value)
+      .map((reward) => `${reward.invites} invites -> ${roleLabel(guild, reward.roleId)}`)
       .join(', ');
   }
   return typeof value === 'object' ? JSON.stringify(value) : String(value);

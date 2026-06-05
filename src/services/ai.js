@@ -19,6 +19,12 @@ async function askAI(prompt, options = {}) {
     ? `\n\nActive server prompt stack:\n${options.promptStack}`
     : '';
   const memoryMessages = aiMemoryMessages(options.memory);
+  const systemContent = [
+    `Personality and server instructions:\n${personality}`,
+    `Bot behavior:\n${behavior}`,
+    promptStack.trim(),
+    systemSuffix
+  ].filter(Boolean).join('\n\n');
 
   if (!env.hfApiKey) {
     return 'AI is configured, but HUGGING_FACE_API_KEY is missing in .env.';
@@ -38,7 +44,7 @@ async function askAI(prompt, options = {}) {
       messages: [
         {
           role: 'system',
-          content: `${personality}\n${behavior}${promptStack}\n${systemSuffix}`
+          content: systemContent
         },
         ...memoryMessages,
         {

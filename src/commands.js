@@ -20,7 +20,7 @@ const env = require('./env');
 const { DEFAULT_GUILD_CONFIG } = require('./db');
 const { buildEmbed, error, success, EMBED_STYLES } = require('./embeds');
 const { parseDuration, formatDuration } = require('./time');
-const { isBotOwner, requireBotOwner, requireModerator, requireRestrict } = require('./permissions');
+const { isBotOwner, requireAdmin, requireBotOwner, requireModerator, requireRestrict } = require('./permissions');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
 const games = require('./services/games');
@@ -96,6 +96,12 @@ const SETUP_CHANNELS = [
     key: 'welcome_channel',
     label: 'Welcome Channel',
     description: 'Welcome message channel.',
+    types: [ChannelType.GuildText]
+  },
+  {
+    key: 'achievement_channel',
+    label: 'Achievement Channel',
+    description: 'Achievement unlock announcements.',
     types: [ChannelType.GuildText]
   },
   {
@@ -190,6 +196,7 @@ const SETUP_CLEAR_ITEMS = [
   ...SETUP_LISTS,
   { key: 'welcome_message', label: 'Welcome Message', description: 'Reset the welcome text template.' },
   { key: 'invite_role_mappings', label: 'Invite Role Mappings', description: 'Remove all invite-to-role mappings.' },
+  { key: 'invite_count_role_rewards', label: 'Invite Count Role Rewards', description: 'Remove all invite-count role rewards.' },
   { key: 'sticky', label: 'Sticky Message', description: 'Delete the sticky message setting for this server.' }
 ];
 
@@ -257,7 +264,11 @@ const PREFIX_ALIASES = {
   invite: 'invites',
   invitescount: 'invites',
   inviterole: 'invite-role',
-  inviteroles: 'invite-role'
+  inviteroles: 'invite-role',
+  roleinvites: 'role-invites',
+  invitecountrole: 'role-invites',
+  invitecountroles: 'role-invites',
+  inviterewards: 'role-invites'
 };
 
 const OWNER_ALIASES = {
@@ -301,7 +312,7 @@ const LOCKED_NORMAL_COMMANDS = new Set([
   'softban', 'mass-ban', 'purge', 'dm', 'say', 'lock', 'unlock', 'lockdown', 'unlockdown',
   'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user',
   'temp-role', 'temp-role-remove', 'set-nick', 'move', 'giveaway', 'steal-emoji',
-  'steal-sticker', 'embed-create', 'invite-role',
+  'steal-sticker', 'embed-create', 'invite-role', 'role-invites',
   'channel-create', 'channel-rename', 'channel-delete', 'channel-update',
   'category-create', 'category-rename', 'category-delete',
   'role-create', 'role-rename', 'role-delete', 'server-rename'
@@ -863,6 +874,13 @@ function slashCommands() {
           .addStringOption((option) => option.setName('invite').setDescription('Invite code or full invite URL.').setRequired(true))
       )
       .addSubcommand((sub) => sub.setName('list').setDescription('List invite role mappings.')),
+
+    new SlashCommandBuilder()
+      .setName('role-invites')
+      .setDescription('Give inviters a role when they reach an invite count.')
+      .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+      .addIntegerOption((option) => option.setName('invites').setDescription('Invite count required.').setRequired(true).setMinValue(1).setMaxValue(1000000))
+      .addRoleOption((option) => option.setName('role').setDescription('Role to give when that invite count is reached.').setRequired(true)),
 
     new SlashCommandBuilder()
       .setName('invites')
@@ -1796,6 +1814,7 @@ async function handleSlash(interaction, db, client) {
       case 'pet':
       case 'qna':
       case 'invite-role':
+      case 'role-invites':
       case 'invites': {
         await handleCommunitySlash(interaction, db);
         break;
@@ -2782,6 +2801,21 @@ function inviteRoleStatusEmbed(db, guild, title = 'Invite Roles') {
   });
 }
 
+function inviteCountRoleStatusEmbed(db, guild, title = 'Invite Count Roles') {
+  const rewards = inviteRoles.listInviteCountRoleRewards(db, guild.id);
+  return buildEmbed(db, guild.id, {
+    title,
+    description: inviteRoles.formatInviteCountRoleRewards(guild, rewards),
+    fields: [
+      {
+        name: 'Requirement',
+        value: 'The bot needs **Manage Server** permission so it can track invite usage, and **Manage Roles** permission to give rewards.'
+      }
+    ],
+    style: 'emerald'
+  });
+}
+
 async function inviteUsageForUser(guild, userId) {
   const me = guild.members.me;
   if (me?.permissions && !me.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
@@ -2988,6 +3022,70 @@ async function handleInviteRolePrefix(message, db, args) {
   await message.reply({ embeds: [inviteRoleStatusEmbed(db, message.guild)] });
 }
 
+async function handleRoleInvitesSlash(interaction, db) {
+  requireAdmin(db, interaction.member);
+  const invites = interaction.options.getInteger('invites');
+  const role = interaction.options.getRole('role');
+  validateInviteRole(interaction.guild, role);
+  const result = inviteRoles.setInviteCountRoleReward(db, interaction.guild.id, invites, role.id);
+  await reply(interaction, {
+    embeds: [
+      success(
+        db,
+        interaction.guild.id,
+        `${result.replaced ? 'Updated' : 'Added'} invite-count reward: **${result.reward.invites}** invite${result.reward.invites === 1 ? '' : 's'} -> ${role}.`
+      )
+    ]
+  }, true);
+}
+
+async function handleRoleInvitesPrefix(message, db, args) {
+  requireAdmin(db, message.member);
+  const sub = String(args[0] || 'list').toLowerCase();
+
+  if (sub === 'list' || sub === 'status') {
+    await message.reply({ embeds: [inviteCountRoleStatusEmbed(db, message.guild)] });
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'delete') {
+    args.shift();
+    const result = inviteRoles.removeInviteCountRoleReward(db, message.guild.id, args.shift());
+    await message.reply({
+      embeds: [
+        result.removed
+          ? success(db, message.guild.id, `Removed invite-count role reward for **${result.invites}** invite${result.invites === 1 ? '' : 's'}.`)
+          : buildEmbed(db, message.guild.id, {
+              title: 'Invite Count Roles',
+              description: `No reward was found for **${result.invites}** invite${result.invites === 1 ? '' : 's'}.`,
+              style: 'amber'
+            })
+      ]
+    });
+    return;
+  }
+
+  if (sub === 'add' || sub === 'set') args.shift();
+  const invites = Number(args.shift());
+  const roleId = idFromMention(args.shift());
+  const role = roleId ? await message.guild.roles.fetch(roleId).catch(() => null) : null;
+  if (!Number.isFinite(invites) || invites < 1 || !role) {
+    throw new Error('Usage: r!role-invites 5 @Role, r!role-invites remove 5, or r!role-invites list');
+  }
+
+  validateInviteRole(message.guild, role);
+  const result = inviteRoles.setInviteCountRoleReward(db, message.guild.id, invites, role.id);
+  await message.reply({
+    embeds: [
+      success(
+        db,
+        message.guild.id,
+        `${result.replaced ? 'Updated' : 'Added'} invite-count reward: **${result.reward.invites}** invite${result.reward.invites === 1 ? '' : 's'} -> ${role}.`
+      )
+    ]
+  });
+}
+
 async function handleCommunitySlash(interaction, db) {
   const name = interaction.commandName;
 
@@ -2998,6 +3096,11 @@ async function handleCommunitySlash(interaction, db) {
 
   if (name === 'invite-role') {
     await handleInviteRoleSlash(interaction, db);
+    return;
+  }
+
+  if (name === 'role-invites') {
+    await handleRoleInvitesSlash(interaction, db);
     return;
   }
 
@@ -3148,6 +3251,7 @@ const HELP_SECTIONS = [
     label: 'Server Systems',
     lines: [
       '`verification setup #channel @role [message]`, `qna setup #channel personality`, `invite-role add invite @role`',
+      '`role-invites 5 @Role`, `/role-invites invites:5 role:@Role`',
       '`invites [member]`, `invites reset [member|all]`, `sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`',
       '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, invite roles, and Q&A settings.'
     ]
@@ -4110,6 +4214,11 @@ async function handlePrefixCommand(message, db, client, command, args) {
 
   if (command === 'invite-role') {
     await handleInviteRolePrefix(message, db, args);
+    return;
+  }
+
+  if (command === 'role-invites') {
+    await handleRoleInvitesPrefix(message, db, args);
     return;
   }
 

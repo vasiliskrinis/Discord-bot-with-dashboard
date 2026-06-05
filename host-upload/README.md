@@ -14,8 +14,8 @@ This bot implements the pasted spec as a Discord.js project with:
 - Hugging Face AI on bot mentions, AI embed creator, AI moderation checks, and simple natural-language moderation commands.
 - Multi-token runtime so one process can log in multiple bot tokens and manage their servers from the same dashboard.
 - Verification panels, Q&A channel personality, digital pets, bump cooldowns, channel restriction visibility sync, and category permission mass sync.
-- SWAT prefix system with case files, database queries, episode guessing, points, and season awards.
-- Booster custom roles, counting channel, welcome messages, member count voice channel, games, reminders, giveaways, snipes, sticky messages, AFK, polls, emoji/sticker steal helpers, and voice utilities.
+- SWAT prefix system with AI-generated investigations, roleplay games, database queries, episode guessing, points, channel locks, reward roles, and AI season awards.
+- Booster custom roles, counting channel, image welcome messages, image level/achievement announcements with buttons, member count voice channel, games, reminders, giveaways, snipes, sticky messages, AFK, polls, emoji/sticker steal helpers, and voice utilities.
 - SQLite persistence with `node:sqlite` at `data/bot.sqlite`.
 - Per-server database configs, so each guild has its own channels, roles, logs, style, tickets, counting, welcome, update channels, and state.
 
@@ -81,11 +81,11 @@ r!setup
 The setup menu configures:
 
 - Restrict role, restrict permissions role, and update ping role.
-- Restrict trap, advanced logs, restrict logs, restricted users, Roblox updates, executor updates, verification, bump, Q&A, counting, welcome, and member-count channels.
+- Restrict trap, advanced logs, restrict logs, restricted users, Roblox updates, executor updates, verification, bump, Q&A, counting, welcome, achievement, level-up, and member-count channels.
 - Admin users, admin roles, and restrict-review authorized roles.
 - Embed style.
 - Welcome message, sticky message, and ticket panels.
-- Clear/reset saved channels, roles, access lists, welcome text, and sticky messages.
+- Clear/reset saved channels, roles, access lists, welcome text, invite role rewards, and sticky messages.
 
 ## Bot Owner Prefix
 
@@ -135,9 +135,15 @@ r!verification setup #channel @VerifiedRole message
 r!channel-restriction #allowed-channel
 r!mass-sync-categories
 r!qna setup #channel personality text
+r!role-invites 5 @InviteReward
 r!pet adopt Byte
 r!bump
 swat help
+swat case new stolen diamonds
+swat case new random
+swat game start hostage downtown courthouse
+swat games
+swat awards
 ```
 
 Owner-only commands use the owner prefix:

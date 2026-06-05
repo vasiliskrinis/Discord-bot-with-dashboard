@@ -1667,6 +1667,7 @@ function typeLabel(type) {
 
 function choiceKindLabel(row) {
   if (row?.key === 'invite_role_mappings') return 'Invite roles';
+  if (row?.key === 'invite_count_role_rewards') return 'Invite count roles';
   const labels = {
     channel: 'Channel',
     'channel-list': 'Channels',
@@ -1687,6 +1688,7 @@ function configChoiceLabel(row) {
   if (!row) return 'No setting selected';
   if (row.empty) return emptyChoiceLabel(row);
   if (row.key === 'invite_role_mappings') return 'Invite role mappings saved';
+  if (row.key === 'invite_count_role_rewards') return 'Invite count rewards saved';
   if (row.picker) {
     const options = state.guildDetail?.options?.[row.picker] || [];
     const labels = listConfigInputValues(row.value).map((id) => {
@@ -1707,6 +1709,7 @@ function configChoiceLabel(row) {
 
 function emptyChoiceLabel(row) {
   if (row?.key === 'invite_role_mappings') return 'Add invite roles';
+  if (row?.key === 'invite_count_role_rewards') return 'Add invite count rewards';
   const labels = {
     channel: 'Choose a channel',
     'channel-list': 'Choose channels',

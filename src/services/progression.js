@@ -1,5 +1,12 @@
+const {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require('discord.js');
 const { buildEmbed } = require('../embeds');
 const { isBotOwner } = require('../permissions');
+const cards = require('./cards');
 
 const XP_COOLDOWN_MS = 45 * 1000;
 const DAILY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
@@ -152,15 +159,41 @@ function awardProgressAchievements(db, guildId, userId, progress) {
 }
 
 async function sendAchievementNotice(db, message, keys) {
+  const configuredChannel = db.getConfig(message.guild.id, 'achievement_channel') ||
+    db.getConfig(message.guild.id, 'level_announce_channel');
+  const channel = configuredChannel
+    ? await message.guild.channels.fetch(configuredChannel).catch(() => null)
+    : message.channel;
+  if (!channel?.isTextBased()) return;
+
+  const first = achievementInfo(keys[0]);
   const names = keys.map((key) => achievementInfo(key).name).join(', ');
-  await message.channel.send({
+  const imageName = `achievement-${message.author.id}.svg`;
+  const image = cards.achievementCard({
+    title: 'Achievement Unlocked!',
+    name: keys.length > 1 ? `${first.name} +${keys.length - 1}` : first.name,
+    description: first.description,
+    rarity: keys.length > 1 ? 'MULTI' : 'RARE'
+  });
+
+  await channel.send({
+    content: `${message.author}`,
     embeds: [
       buildEmbed(db, message.guild.id, {
-        title: 'Achievement Unlocked',
-        description: `${message.author} earned **${names}**.`,
+        title: `${message.guild.name} Achievements`,
+        description: [
+          `Lets go! ${message.author}`,
+          'You just unlocked the achievement:',
+          `**${names}**`
+        ].join('\n'),
+        image: `attachment://${imageName}`,
         style: 'violet'
       })
     ],
+    files: [
+      new AttachmentBuilder(Buffer.from(image), { name: imageName })
+    ],
+    components: [progressActionRow(message.author.id)],
     allowedMentions: { users: [message.author.id] }
   });
 }
@@ -172,11 +205,20 @@ async function sendLevelAnnouncement(db, message, progress, xpGain) {
     : message.channel;
   if (!channel?.isTextBased()) return;
 
+  const imageName = `level-${message.author.id}.svg`;
+  const image = cards.levelCard({
+    username: message.author.username || message.author.tag,
+    level: progress.level,
+    previousLevel: Math.max(0, Number(progress.level || 1) - 1)
+  });
+
   await channel.send({
+    content: `${message.author} Has Reached Level ${progress.level}. GG!`,
     embeds: [
       buildEmbed(db, message.guild.id, {
         title: 'Level Up',
         description: `${message.author} reached **level ${progress.level}**.${xpGain ? ` +${xpGain} XP` : ''}`,
+        image: `attachment://${imageName}`,
         fields: [
           { name: 'Total XP', value: String(progress.xp), inline: true },
           { name: 'Next Level', value: String(xpForLevel(progress.level + 1)), inline: true }
@@ -184,7 +226,67 @@ async function sendLevelAnnouncement(db, message, progress, xpGain) {
         style: 'royal'
       })
     ],
+    files: [
+      new AttachmentBuilder(Buffer.from(image), { name: imageName })
+    ],
+    components: [progressActionRow(message.author.id)],
     allowedMentions: { users: [message.author.id] }
+  });
+}
+
+function progressActionRow(userId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`progress:profile:${userId}`)
+      .setLabel('Profile')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`progress:achievements:${userId}`)
+      .setLabel('Achievements')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('progress:leaderboard')
+      .setLabel('Leaderboard')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+async function handleProgressButton(db, interaction) {
+  const [, action, userId] = String(interaction.customId || '').split(':');
+  const targetUserId = userId || interaction.user.id;
+  const user = await interaction.client.users.fetch(targetUserId).catch(() => interaction.user);
+
+  if (action === 'leaderboard') {
+    const rows = db.listProgressLeaderboard(interaction.guild.id, 'xp', 10);
+    await interaction.reply({ embeds: [leaderboardEmbed(db, interaction.guild, rows, 'xp')], ephemeral: true });
+    return;
+  }
+
+  const progress = db.ensureMemberProgress(interaction.guild.id, targetUserId);
+  const achievements = db.listAchievements(interaction.guild.id, targetUserId);
+  if (action === 'achievements') {
+    const earned = achievements
+      .map((row) => {
+        const info = achievementInfo(row.key);
+        return `**${info.name}** - ${info.description}`;
+      })
+      .join('\n') || 'No achievements unlocked yet.';
+    await interaction.reply({
+      embeds: [
+        buildEmbed(db, interaction.guild.id, {
+          title: `${user.username || user.tag} Achievements`,
+          description: earned,
+          style: 'violet'
+        })
+      ],
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [profileEmbed(db, interaction.guild, user, progress, achievements)],
+    ephemeral: true
   });
 }
 
@@ -300,6 +402,7 @@ module.exports = {
   applyLevelRoles,
   awardMessageActivity,
   claimDaily,
+  handleProgressButton,
   leaderboardEmbed,
   listRoleRewards,
   normalizeRoleRewards,
