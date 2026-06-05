@@ -6,6 +6,7 @@ const state = {
   selectedGuildId: null,
   guildDetail: null,
   view: 'overview',
+  selectedCommandCategory: 'all',
   picker: null,
   refreshTimer: null,
   toastTimer: null
@@ -45,10 +46,54 @@ function bindElements() {
     statusSelect: document.getElementById('statusSelect'),
     activityTypeSelect: document.getElementById('activityTypeSelect'),
     activityTextInput: document.getElementById('activityTextInput'),
+    commandSummary: document.getElementById('commandSummary'),
+    commandStats: document.getElementById('commandStats'),
+    commandCategoryList: document.getElementById('commandCategoryList'),
+    commandCategoryTitle: document.getElementById('commandCategoryTitle'),
+    commandCategoryMeta: document.getElementById('commandCategoryMeta'),
+    commandCatalog: document.getElementById('commandCatalog'),
     commandUsage: document.getElementById('commandUsage'),
     botBans: document.getElementById('botBans'),
     serverHeader: document.getElementById('serverHeader'),
     serverActionBar: document.getElementById('serverActionBar'),
+    serverControlStatus: document.getElementById('serverControlStatus'),
+    channelCreateForm: document.getElementById('channelCreateForm'),
+    channelCreateTypeSelect: document.getElementById('channelCreateTypeSelect'),
+    channelCreateNameInput: document.getElementById('channelCreateNameInput'),
+    channelCreateCategorySelect: document.getElementById('channelCreateCategorySelect'),
+    channelCreateTopicInput: document.getElementById('channelCreateTopicInput'),
+    channelCreateSlowmodeInput: document.getElementById('channelCreateSlowmodeInput'),
+    channelManageForm: document.getElementById('channelManageForm'),
+    channelManageSelect: document.getElementById('channelManageSelect'),
+    channelManageNameInput: document.getElementById('channelManageNameInput'),
+    channelManageCategorySelect: document.getElementById('channelManageCategorySelect'),
+    channelManageTopicInput: document.getElementById('channelManageTopicInput'),
+    channelManageSlowmodeInput: document.getElementById('channelManageSlowmodeInput'),
+    channelManageLockSelect: document.getElementById('channelManageLockSelect'),
+    channelRenameButton: document.getElementById('channelRenameButton'),
+    channelUpdateButton: document.getElementById('channelUpdateButton'),
+    channelDeleteButton: document.getElementById('channelDeleteButton'),
+    categoryCreateForm: document.getElementById('categoryCreateForm'),
+    categoryCreateNameInput: document.getElementById('categoryCreateNameInput'),
+    categoryManageForm: document.getElementById('categoryManageForm'),
+    categoryManageSelect: document.getElementById('categoryManageSelect'),
+    categoryManageNameInput: document.getElementById('categoryManageNameInput'),
+    categoryRenameButton: document.getElementById('categoryRenameButton'),
+    categoryDeleteButton: document.getElementById('categoryDeleteButton'),
+    roleCreateForm: document.getElementById('roleCreateForm'),
+    roleCreateNameInput: document.getElementById('roleCreateNameInput'),
+    roleCreateColorInput: document.getElementById('roleCreateColorInput'),
+    roleCreateHoistInput: document.getElementById('roleCreateHoistInput'),
+    roleCreateMentionableInput: document.getElementById('roleCreateMentionableInput'),
+    roleManageForm: document.getElementById('roleManageForm'),
+    roleManageSelect: document.getElementById('roleManageSelect'),
+    roleManageNameInput: document.getElementById('roleManageNameInput'),
+    roleRenameButton: document.getElementById('roleRenameButton'),
+    roleDeleteButton: document.getElementById('roleDeleteButton'),
+    serverRenameForm: document.getElementById('serverRenameForm'),
+    serverNameInput: document.getElementById('serverNameInput'),
+    ticketsHeader: document.getElementById('ticketsHeader'),
+    ticketStats: document.getElementById('ticketStats'),
     embedForm: document.getElementById('embedForm'),
     embedChannelSelect: document.getElementById('embedChannelSelect'),
     embedContentInput: document.getElementById('embedContentInput'),
@@ -64,6 +109,9 @@ function bindElements() {
     embedSelectList: document.getElementById('embedSelectList'),
     embedJsonInput: document.getElementById('embedJsonInput'),
     embedUseJsonInput: document.getElementById('embedUseJsonInput'),
+    embedPreviewChannel: document.getElementById('embedPreviewChannel'),
+    embedPreviewStatus: document.getElementById('embedPreviewStatus'),
+    embedPreviewCanvas: document.getElementById('embedPreviewCanvas'),
     addEmbedFieldButton: document.getElementById('addEmbedFieldButton'),
     addEmbedButtonButton: document.getElementById('addEmbedButtonButton'),
     addEmbedSelectButton: document.getElementById('addEmbedSelectButton'),
@@ -73,8 +121,28 @@ function bindElements() {
     configForm: document.getElementById('configForm'),
     configKeySelect: document.getElementById('configKeySelect'),
     configValueInput: document.getElementById('configValueInput'),
+    configTextField: document.getElementById('configTextField'),
+    configChoicePanel: document.getElementById('configChoicePanel'),
+    configBooleanInput: document.getElementById('configBooleanInput'),
     configPickerButton: document.getElementById('configPickerButton'),
     configTable: document.getElementById('configTable'),
+    ticketPanelForm: document.getElementById('ticketPanelForm'),
+    ticketPanelStatus: document.getElementById('ticketPanelStatus'),
+    ticketPanelNewButton: document.getElementById('ticketPanelNewButton'),
+    ticketPanelList: document.getElementById('ticketPanelList'),
+    ticketPanelIdInput: document.getElementById('ticketPanelIdInput'),
+    ticketPanelNameInput: document.getElementById('ticketPanelNameInput'),
+    ticketPanelModeInput: document.getElementById('ticketPanelModeInput'),
+    ticketPanelChannelSelect: document.getElementById('ticketPanelChannelSelect'),
+    ticketPanelCategorySelect: document.getElementById('ticketPanelCategorySelect'),
+    ticketPanelRoleSelect: document.getElementById('ticketPanelRoleSelect'),
+    ticketPanelButtonLabelInput: document.getElementById('ticketPanelButtonLabelInput'),
+    ticketPanelButtonStyleSelect: document.getElementById('ticketPanelButtonStyleSelect'),
+    ticketPanelDescriptionInput: document.getElementById('ticketPanelDescriptionInput'),
+    ticketPanelContentInput: document.getElementById('ticketPanelContentInput'),
+    ticketPanelOpenMessageInput: document.getElementById('ticketPanelOpenMessageInput'),
+    ticketPanelCloseLabelInput: document.getElementById('ticketPanelCloseLabelInput'),
+    ticketPanelDeleteLabelInput: document.getElementById('ticketPanelDeleteLabelInput'),
     restrictionList: document.getElementById('restrictionList'),
     caseList: document.getElementById('caseList'),
     ticketList: document.getElementById('ticketList'),
@@ -151,6 +219,13 @@ function bindEvents() {
     button.addEventListener('click', () => setView(button.dataset.view));
   });
 
+  els.commandCategoryList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-command-category]');
+    if (!button) return;
+    state.selectedCommandCategory = button.dataset.commandCategory;
+    renderCommandCatalog(state.overview?.commandCatalog || []);
+  });
+
   els.presenceForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const payload = {
@@ -166,6 +241,141 @@ function bindEvents() {
 
   els.configKeySelect.addEventListener('change', syncConfigEditor);
   els.configPickerButton.addEventListener('click', openConfigPicker);
+
+  els.channelCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'channel-create',
+      channelType: els.channelCreateTypeSelect.value,
+      name: els.channelCreateNameInput.value,
+      parentId: els.channelCreateCategorySelect.value,
+      topic: els.channelCreateTopicInput.value,
+      slowmode: els.channelCreateSlowmodeInput.value
+    }, {
+      button: els.channelCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.channelCreateNameInput.value = '';
+        els.channelCreateTopicInput.value = '';
+        els.channelCreateSlowmodeInput.value = '0';
+      }
+    });
+  });
+
+  els.categoryCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'category-create',
+      name: els.categoryCreateNameInput.value
+    }, {
+      button: els.categoryCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.categoryCreateNameInput.value = '';
+      }
+    });
+  });
+
+  els.serverRenameForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'server-rename',
+      name: els.serverNameInput.value
+    }, { button: els.serverRenameForm.querySelector('button[type="submit"]') });
+  });
+
+  els.roleCreateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await runSelectedGuildAction({
+      action: 'role-create',
+      name: els.roleCreateNameInput.value,
+      color: els.roleCreateColorInput.value,
+      hoist: els.roleCreateHoistInput.checked,
+      mentionable: els.roleCreateMentionableInput.checked
+    }, {
+      button: els.roleCreateForm.querySelector('button[type="submit"]'),
+      onSuccess: () => {
+        els.roleCreateNameInput.value = '';
+        els.roleCreateHoistInput.checked = false;
+        els.roleCreateMentionableInput.checked = false;
+      }
+    });
+  });
+
+  els.channelManageSelect.addEventListener('change', syncChannelManager);
+  els.categoryManageSelect.addEventListener('change', syncCategoryManager);
+  els.roleManageSelect.addEventListener('change', syncRoleManager);
+  els.channelManageForm.addEventListener('submit', (event) => event.preventDefault());
+  els.categoryManageForm.addEventListener('submit', (event) => event.preventDefault());
+  els.roleManageForm.addEventListener('submit', (event) => event.preventDefault());
+
+  els.channelRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'channel-rename',
+      channelId: els.channelManageSelect.value,
+      name: els.channelManageNameInput.value
+    }, { button: els.channelRenameButton });
+  });
+
+  els.channelUpdateButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'channel-update',
+      channelId: els.channelManageSelect.value,
+      parentId: els.channelManageCategorySelect.value,
+      topic: els.channelManageTopicInput.value,
+      slowmode: els.channelManageSlowmodeInput.value,
+      lockState: els.channelManageLockSelect.value
+    }, {
+      button: els.channelUpdateButton,
+      onSuccess: () => {
+        els.channelManageLockSelect.value = 'keep';
+      }
+    });
+  });
+
+  els.channelDeleteButton.addEventListener('click', async () => {
+    const channel = selectedDashboardOption('channels', els.channelManageSelect.value);
+    if (!channel || !window.confirm(`Delete #${channel.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'channel-delete',
+      channelId: channel.id,
+      confirm: channel.id
+    }, { button: els.channelDeleteButton });
+  });
+
+  els.categoryRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'category-rename',
+      categoryId: els.categoryManageSelect.value,
+      name: els.categoryManageNameInput.value
+    }, { button: els.categoryRenameButton });
+  });
+
+  els.categoryDeleteButton.addEventListener('click', async () => {
+    const category = selectedDashboardOption('categories', els.categoryManageSelect.value);
+    if (!category || !window.confirm(`Delete category ${category.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'category-delete',
+      categoryId: category.id,
+      confirm: category.id
+    }, { button: els.categoryDeleteButton });
+  });
+
+  els.roleRenameButton.addEventListener('click', async () => {
+    await runSelectedGuildAction({
+      action: 'role-rename',
+      roleId: els.roleManageSelect.value,
+      name: els.roleManageNameInput.value
+    }, { button: els.roleRenameButton });
+  });
+
+  els.roleDeleteButton.addEventListener('click', async () => {
+    const role = selectedDashboardOption('roles', els.roleManageSelect.value);
+    if (!role || !window.confirm(`Delete @${role.label}?`)) return;
+    await runSelectedGuildAction({
+      action: 'role-delete',
+      roleId: role.id,
+      confirm: role.id
+    }, { button: els.roleDeleteButton });
+  });
 
   els.embedForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -184,16 +394,21 @@ function bindEvents() {
     }
   });
 
+  els.embedForm.addEventListener('input', renderEmbedPreview);
+  els.embedForm.addEventListener('change', renderEmbedPreview);
+
   els.addEmbedFieldButton.addEventListener('click', () => addEmbedFieldRow());
   els.addEmbedButtonButton.addEventListener('click', () => addEmbedButtonRow());
   els.addEmbedSelectButton.addEventListener('click', () => addEmbedSelectRow());
   els.syncEmbedJsonButton.addEventListener('click', () => {
     syncEmbedJsonFromForm();
+    renderEmbedPreview();
     showToast('JSON updated from menu.');
   });
   els.applyEmbedJsonButton.addEventListener('click', () => {
     try {
       applyEmbedPayloadToForm(parseEmbedJsonPayload());
+      renderEmbedPreview();
       showToast('JSON loaded into menu.');
     } catch (err) {
       showToast(err.message || 'Invalid embed JSON.');
@@ -204,6 +419,7 @@ function bindEvents() {
     const removeTarget = event.target.closest('[data-builder-remove]');
     if (removeTarget) {
       removeTarget.closest('[data-builder-row]')?.remove();
+      renderEmbedPreview();
       return;
     }
 
@@ -211,6 +427,7 @@ function bindEvents() {
     if (addOptionTarget) {
       const selectRow = addOptionTarget.closest('.embed-select-row');
       addEmbedSelectOptionRow(selectRow?.querySelector('.embed-select-options'));
+      renderEmbedPreview();
     }
   });
 
@@ -218,15 +435,47 @@ function bindEvents() {
     event.preventDefault();
     if (!state.selectedGuildId) return;
     const key = els.configKeySelect.value;
-    const value = els.configValueInput.value;
-    const detail = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/config`, {
-      method: 'POST',
-      body: { key, value }
-    });
-    state.guildDetail = detail;
-    renderGuildDetail(detail);
-    await loadOverview(false);
-    showToast('Setting saved.');
+    const row = state.guildDetail?.config.find((item) => item.key === key);
+    const value = row?.type === 'boolean' ? selectedBooleanConfigValue() : els.configValueInput.value;
+    await saveConfigValue(key, value);
+  });
+
+  els.configBooleanInput.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-boolean-value]');
+    if (!button) return;
+    setBooleanControlValue(button.dataset.booleanValue === 'true');
+  });
+
+  els.ticketPanelForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!state.selectedGuildId) return;
+    const submitButton = els.ticketPanelForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+      const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/tickets/panel`, {
+        method: 'POST',
+        body: ticketPanelPayload()
+      });
+      state.guildDetail = response.detail;
+      renderGuildDetail(response.detail);
+      showToast(`Ticket panel ${response.action}.`);
+    } catch (err) {
+      showToast(err.message || 'Ticket panel save failed.');
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  els.ticketPanelForm.addEventListener('click', (event) => {
+    const modeButton = event.target.closest('[data-ticket-mode]');
+    if (modeButton) {
+      setTicketMode(modeButton.dataset.ticketMode);
+    }
+  });
+
+  els.ticketPanelNewButton.addEventListener('click', () => {
+    fillTicketPanelForm(null);
+    showToast('New ticket panel ready.');
   });
 
   els.broadcastForm.addEventListener('submit', async (event) => {
@@ -312,7 +561,11 @@ function bindEvents() {
     state.picker.selected.clear();
     renderPickerList();
   });
-  els.pickerApplyButton.addEventListener('click', applyPickerSelection);
+  els.pickerApplyButton.addEventListener('click', () => {
+    applyPickerSelection().catch((err) => {
+      showToast(err.message || 'Could not save choice.');
+    });
+  });
 }
 
 async function init() {
@@ -336,7 +589,7 @@ async function init() {
 
 async function refreshCurrentView(withGuild = true) {
   await loadOverview(false);
-  if (withGuild && state.view === 'server' && state.selectedGuildId) {
+  if (withGuild && ['server', 'tickets'].includes(state.view) && state.selectedGuildId) {
     await loadGuild(state.selectedGuildId);
   }
 }
@@ -352,9 +605,11 @@ async function loadOverview(resetGuild = true) {
 
 async function loadGuild(guildId) {
   if (!guildId) return;
+  const previousGuildId = state.selectedGuildId;
   const detail = await request(`/api/guilds/${encodeURIComponent(guildId)}`);
   state.selectedGuildId = guildId;
   state.guildDetail = detail;
+  if (previousGuildId !== guildId && els.ticketPanelIdInput) els.ticketPanelIdInput.value = '';
   renderGuildList();
   renderGuildDetail(detail);
 }
@@ -366,6 +621,7 @@ function renderOverview(overview) {
   renderStats(overview);
   renderRuntimeControls(overview.runtime);
   renderPresenceForm(overview.bot);
+  renderCommandCatalog(overview.commandCatalog || []);
   renderCommandUsage(overview.commandUsage);
   renderBotBans(overview.botBans);
   renderDatabase(overview.database);
@@ -458,6 +714,102 @@ function renderPresenceForm(bot) {
   }
 }
 
+function renderCommandCatalog(commands) {
+  if (!els.commandCatalog) return;
+  const sections = commandSections(commands || []);
+  const allCommands = sections.flatMap((section) => section.commands);
+  if (!sections.some((section) => section.id === state.selectedCommandCategory)) {
+    state.selectedCommandCategory = 'all';
+  }
+
+  const selected = state.selectedCommandCategory === 'all'
+    ? null
+    : sections.find((section) => section.id === state.selectedCommandCategory);
+  const visibleSections = selected ? [selected] : sections;
+
+  els.commandSummary.textContent = `${formatNumber(allCommands.length)} commands grouped by workflow.`;
+  els.commandStats.innerHTML = [
+    ['Categories', sections.length],
+    ['Slash commands', allCommands.filter((command) => command.source !== 'owner').length],
+    ['Owner tools', allCommands.filter((command) => command.source === 'owner').length],
+    ['Subcommands', allCommands.reduce((sum, command) => sum + (command.subcommands?.length || 0), 0)]
+  ].map(([label, value]) => `
+    <div class="mini-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatNumber(value)}</strong>
+    </div>
+  `).join('');
+
+  els.commandCategoryList.innerHTML = [
+    { id: 'all', label: 'All Commands', description: 'Every command category', commands: allCommands },
+    ...sections
+  ].map((section) => `
+    <button class="command-category ${section.id === state.selectedCommandCategory ? 'is-active' : ''}" type="button" data-command-category="${escapeAttribute(section.id)}">
+      <span>
+        <strong>${escapeHtml(section.label)}</strong>
+        <small>${escapeHtml(section.description || `${section.commands.length} commands`)}</small>
+      </span>
+      <b>${formatNumber(section.commands.length)}</b>
+    </button>
+  `).join('');
+
+  els.commandCategoryTitle.textContent = selected ? selected.label : 'All Commands';
+  els.commandCategoryMeta.textContent = selected
+    ? `${formatNumber(selected.commands.length)} commands - ${selected.description}`
+    : `${formatNumber(allCommands.length)} commands across ${formatNumber(sections.length)} categories`;
+
+  els.commandCatalog.innerHTML = visibleSections.map((section) => `
+    <article class="command-section">
+      <div class="command-section-head">
+        <span>${escapeHtml(section.label)}</span>
+        <strong>${formatNumber(section.commands.length)}</strong>
+      </div>
+      <div class="command-grid">
+        ${section.commands.map(commandCard).join('')}
+      </div>
+    </article>
+  `).join('') || '<div class="empty-state">No commands registered.</div>';
+}
+
+function commandSections(commands) {
+  const groups = [
+    ['setup', 'Setup', 'Configuration, verification, server setup.', new Set(['setup', 'verification', 'channel-restriction', 'mass-sync-categories', 'qna'])],
+    ['tickets', 'Tickets', 'Panel creation and support flow tools.', new Set(['ticket-panel'])],
+    ['moderation', 'Moderation', 'Restriction, cases, warnings, bans.', new Set(['restrict', 'unrestrict', 'ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'warnings', 'softban', 'mass-ban', 'case', 'ban-list', 'note'])],
+    ['channels', 'Channels & Roles', 'Permissions, cleanup, roles, voice tools.', new Set(['lock', 'unlock', 'lockdown', 'unlockdown', 'purge', 'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user', 'temp-role', 'temp-role-remove', 'temp-role-list', 'move', 'set-nick'])],
+    ['community', 'Community & Utility', 'General server utilities and broadcasts.', new Set(['help', 'ping', 'afk', 'poll', 'dm', 'say', 'userinfo', 'snipe', 'first-message', 'remind', 'giveaway', 'bump', 'booster-role', 'steal-emoji', 'steal-sticker'])],
+    ['ai', 'AI & Embeds', 'AI embed creation and Q&A workflows.', new Set(['embed-create'])],
+    ['progress', 'Games & Progress', 'Games, economy, levels, pets.', new Set(['game', 'balance', 'daily', 'profile', 'level', 'leaderboard', 'role-level', 'pet'])]
+  ];
+
+  const byName = new Map(commands.map((command) => [command.name, command]));
+  const sections = groups.map(([id, label, description, names]) => ({
+    id,
+    label,
+    description,
+    commands: [...names].map((name) => byName.get(name)).filter(Boolean)
+  }));
+  const known = new Set(groups.flatMap(([, , , names]) => [...names]));
+  const extra = commands.filter((command) => !known.has(command.name));
+  if (extra.length) sections.push({ id: 'other', label: 'Other', description: 'Additional registered commands.', commands: extra });
+  return sections.filter((section) => section.commands.length);
+}
+
+function commandCard(command) {
+  const usage = command.usage || `/${command.name}`;
+  const subcommands = command.subcommands || [];
+  const options = command.options || [];
+  return `
+    <button class="command-card" type="button" title="${escapeAttribute(command.description || command.name)}">
+      <span class="command-source">${escapeHtml(command.source === 'owner' ? 'Owner' : 'Slash')}</span>
+      <strong>${escapeHtml(usage)}</strong>
+      <span>${escapeHtml(command.description || 'No description')}</span>
+      ${subcommands.length ? `<small>${escapeHtml(subcommands.map((name) => `${usage} ${name}`).join('  '))}</small>` : ''}
+      ${options.length ? `<em>${escapeHtml(options.slice(0, 6).join(', '))}</em>` : ''}
+    </button>
+  `;
+}
+
 function renderGuildList() {
   if (!state.overview) return;
   const query = els.guildSearch.value.trim().toLowerCase();
@@ -479,7 +831,7 @@ function renderGuildList() {
   els.guildList.querySelectorAll('[data-guild-id]').forEach((button) => {
     button.addEventListener('click', async () => {
       await loadGuild(button.dataset.guildId);
-      setView('server');
+      setView(state.view === 'tickets' ? 'tickets' : 'server');
     });
   });
 }
@@ -492,21 +844,127 @@ function renderGuildDetail(detail) {
     : 'Critical settings ready';
   const pillClass = guild.missingCritical.length ? (guild.missingCritical.length > 2 ? ' danger' : ' warn') : '';
 
-  els.serverHeader.innerHTML = `
+  const headerHtml = `
     <div>
       <h2>${escapeHtml(guild.name)}</h2>
       <p>${formatNumber(guild.memberCount)} members - ${formatNumber(guild.channelCount)} channels - ${formatNumber(guild.roleCount)} roles</p>
     </div>
     <span class="pill${pillClass}">${escapeHtml(health)}</span>
   `;
+  els.serverHeader.innerHTML = headerHtml;
+  els.ticketsHeader.innerHTML = headerHtml;
 
   renderConfig(detail.config);
+  renderTicketPanelForm(detail);
+  renderTicketStats(detail);
   renderEmbedSender(detail);
   renderServerActions(guild);
+  renderServerControlCenter(detail);
   renderRestrictions(detail.activeRestrictions);
   renderCases(detail.recentCases);
-  renderTickets(detail.ticketPanels, detail.tickets);
+  renderTicketPanelList(detail.ticketPanels);
+  renderTickets(detail.tickets);
   renderScheduled(detail);
+}
+
+function renderTicketPanelForm(detail) {
+  const textChannels = detail.options?.textChannels || [];
+  const categories = detail.options?.categories || [];
+  const roles = detail.options?.roles || [];
+  const activePanel = detail.ticketPanels?.[0] || null;
+
+  fillSelect(els.ticketPanelChannelSelect, textChannels, 'Choose a text channel', true);
+  fillSelect(els.ticketPanelCategorySelect, categories, 'No category', false);
+  fillSelect(els.ticketPanelRoleSelect, roles, 'No support role', false);
+
+  if (!els.ticketPanelIdInput.value && activePanel) {
+    fillTicketPanelForm(activePanel);
+  } else if (!activePanel) {
+    fillTicketPanelForm(null);
+  }
+
+  els.ticketPanelStatus.textContent = `${formatNumber(detail.ticketPanels?.length || 0)} panels - ${formatNumber(detail.tickets?.filter((ticket) => ticket.status === 'open').length || 0)} open tickets`;
+}
+
+function renderTicketStats(detail) {
+  const panels = detail.ticketPanels || [];
+  const tickets = detail.tickets || [];
+  const openTickets = tickets.filter((ticket) => ticket.status === 'open').length;
+  const threadPanels = panels.filter((panel) => panel.mode !== 'channel').length;
+  const channelPanels = panels.filter((panel) => panel.mode === 'channel').length;
+  els.ticketStats.innerHTML = [
+    ['Panels', panels.length, `${threadPanels} thread / ${channelPanels} channel`],
+    ['Open Tickets', openTickets, `${Math.max(0, tickets.length - openTickets)} closed recent`],
+    ['Support Roles', new Set(panels.map((panel) => panel.supportRoleId).filter(Boolean)).size, 'unique roles'],
+    ['Posted Panels', panels.filter((panel) => panel.panelMessageId).length, 'messages tracked']
+  ].map(([label, value, detailText]) => `
+    <article class="stat-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${formatNumber(value)}</strong>
+      <small>${escapeHtml(detailText)}</small>
+    </article>
+  `).join('');
+}
+
+function fillSelect(select, items, placeholder, required) {
+  const previous = select.value;
+  select.innerHTML = [
+    required ? '' : `<option value="">${escapeHtml(placeholder)}</option>`,
+    ...items.map((item) => `<option value="${escapeAttribute(item.id)}">${escapeHtml(item.label)}</option>`)
+  ].join('');
+  if (items.some((item) => item.id === previous) || (!required && previous === '')) {
+    select.value = previous;
+  } else if (required && items[0]) {
+    select.value = items[0].id;
+  }
+}
+
+function fillTicketPanelForm(panel) {
+  els.ticketPanelIdInput.value = panel?.panelId || '';
+  els.ticketPanelNameInput.value = panel?.name || 'Support Tickets';
+  setTicketMode(panel?.mode || 'thread');
+  setSelectValue(els.ticketPanelChannelSelect, panel?.panelChannelId || '');
+  setSelectValue(els.ticketPanelCategorySelect, panel?.categoryId || '');
+  setSelectValue(els.ticketPanelRoleSelect, panel?.supportRoleId || '');
+  els.ticketPanelButtonLabelInput.value = panel?.buttonLabel || 'Open Ticket';
+  els.ticketPanelButtonStyleSelect.value = panel?.buttonStyle || 'primary';
+  els.ticketPanelDescriptionInput.value = panel?.description || 'Open a ticket and the support team will help you.';
+  els.ticketPanelContentInput.value = panel?.panelContent || '';
+  els.ticketPanelOpenMessageInput.value = panel?.openMessage || '';
+  els.ticketPanelCloseLabelInput.value = panel?.closeButtonLabel || 'Close Ticket';
+  els.ticketPanelDeleteLabelInput.value = panel?.deleteButtonLabel || 'Delete Ticket';
+}
+
+function setSelectValue(select, value) {
+  if ([...select.options].some((option) => option.value === value)) {
+    select.value = value;
+  }
+}
+
+function setTicketMode(mode) {
+  const normalized = mode === 'channel' ? 'channel' : 'thread';
+  els.ticketPanelModeInput.value = normalized;
+  els.ticketPanelForm.querySelectorAll('[data-ticket-mode]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.ticketMode === normalized);
+  });
+}
+
+function ticketPanelPayload() {
+  return {
+    panelId: els.ticketPanelIdInput.value,
+    name: els.ticketPanelNameInput.value,
+    mode: els.ticketPanelModeInput.value,
+    panelChannelId: els.ticketPanelChannelSelect.value,
+    categoryId: els.ticketPanelCategorySelect.value,
+    supportRoleId: els.ticketPanelRoleSelect.value,
+    buttonLabel: els.ticketPanelButtonLabelInput.value,
+    buttonStyle: els.ticketPanelButtonStyleSelect.value,
+    description: els.ticketPanelDescriptionInput.value,
+    panelContent: els.ticketPanelContentInput.value,
+    openMessage: els.ticketPanelOpenMessageInput.value,
+    closeButtonLabel: els.ticketPanelCloseLabelInput.value,
+    deleteButtonLabel: els.ticketPanelDeleteLabelInput.value
+  };
 }
 
 function renderEmbedSender(detail) {
@@ -521,23 +979,7 @@ function renderEmbedSender(detail) {
     els.embedChannelSelect.value = channels[0].id;
   }
 
-  if (!els.embedFieldList.children.length) {
-    addEmbedFieldRow({ name: 'Status', value: 'Ready', inline: true });
-    addEmbedFieldRow({ name: 'Priority', value: 'High', inline: true });
-  }
-  if (!els.embedButtonList.children.length) {
-    addEmbedButtonRow({ label: 'Primary', style: 'primary', customId: `dashboard:button:${Date.now()}` });
-  }
-  if (!els.embedSelectList.children.length) {
-    addEmbedSelectRow({
-      placeholder: 'Choose an option',
-      customId: `dashboard:select:${Date.now()}`,
-      options: [
-        { label: 'Option A', value: 'a', description: 'First option' },
-        { label: 'Option B', value: 'b', description: 'Second option' }
-      ]
-    });
-  }
+  renderEmbedPreview();
 }
 
 function addEmbedFieldRow(field = {}) {
@@ -560,6 +1002,7 @@ function addEmbedFieldRow(field = {}) {
     <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
   `;
   els.embedFieldList.appendChild(row);
+  renderEmbedPreview();
 }
 
 function addEmbedButtonRow(button = {}) {
@@ -569,7 +1012,7 @@ function addEmbedButtonRow(button = {}) {
   row.innerHTML = `
     <label>
       Label
-      <input class="embed-button-label" type="text" maxlength="80" value="${escapeAttribute(button.label || 'Button')}">
+      <input class="embed-button-label" type="text" maxlength="80" placeholder="Button label" value="${escapeAttribute(button.label || '')}">
     </label>
     <label>
       Style
@@ -604,6 +1047,7 @@ function addEmbedButtonRow(button = {}) {
     <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
   `;
   els.embedButtonList.appendChild(row);
+  renderEmbedPreview();
 }
 
 function addEmbedSelectRow(select = {}) {
@@ -613,7 +1057,7 @@ function addEmbedSelectRow(select = {}) {
   row.innerHTML = `
     <label>
       Placeholder
-      <input class="embed-select-placeholder" type="text" maxlength="150" value="${escapeAttribute(select.placeholder || 'Choose an option')}">
+      <input class="embed-select-placeholder" type="text" maxlength="150" placeholder="Menu placeholder" value="${escapeAttribute(select.placeholder || '')}">
     </label>
     <label>
       Custom ID
@@ -633,8 +1077,9 @@ function addEmbedSelectRow(select = {}) {
   `;
   els.embedSelectList.appendChild(row);
   const optionList = row.querySelector('.embed-select-options');
-  const options = select.options?.length ? select.options : [{ label: 'Option A', value: 'a' }];
+  const options = select.options?.length ? select.options : [];
   options.forEach((option) => addEmbedSelectOptionRow(optionList, option));
+  renderEmbedPreview();
 }
 
 function addEmbedSelectOptionRow(optionList, option = {}) {
@@ -645,11 +1090,11 @@ function addEmbedSelectOptionRow(optionList, option = {}) {
   row.innerHTML = `
     <label>
       Label
-      <input class="embed-option-label" type="text" maxlength="100" value="${escapeAttribute(option.label || 'Option')}">
+      <input class="embed-option-label" type="text" maxlength="100" placeholder="Option label" value="${escapeAttribute(option.label || '')}">
     </label>
     <label>
       Value
-      <input class="embed-option-value" type="text" maxlength="100" value="${escapeAttribute(option.value || 'option')}">
+      <input class="embed-option-value" type="text" maxlength="100" placeholder="option_value" value="${escapeAttribute(option.value || '')}">
     </label>
     <label>
       Description
@@ -674,6 +1119,153 @@ function addEmbedSelectOptionRow(optionList, option = {}) {
     <button class="secondary-button compact" type="button" data-builder-remove>Remove</button>
   `;
   optionList.appendChild(row);
+  renderEmbedPreview();
+}
+
+function renderEmbedPreview() {
+  if (!els.embedPreviewCanvas) return;
+  let payload;
+  try {
+    payload = buildEmbedPreviewPayload();
+    els.embedPreviewStatus.textContent = els.embedUseJsonInput.checked ? 'JSON' : 'Live';
+    els.embedPreviewStatus.classList.remove('is-error');
+  } catch (err) {
+    els.embedPreviewStatus.textContent = 'Invalid JSON';
+    els.embedPreviewStatus.classList.add('is-error');
+    els.embedPreviewChannel.textContent = selectedEmbedChannelLabel();
+    els.embedPreviewCanvas.innerHTML = `
+      <div class="embed-preview-empty">
+        <strong>Preview paused</strong>
+        <span>${escapeHtml(err.message || 'Invalid JSON payload.')}</span>
+      </div>
+    `;
+    return;
+  }
+
+  const embed = firstEmbedFromPayload(payload);
+  const buttons = Array.isArray(payload.buttons) ? payload.buttons : [];
+  const selects = Array.isArray(payload.selects) ? payload.selects : [];
+  const hasEmbed = hasVisibleEmbedPreview(embed);
+  const hasContent = Boolean(String(payload.content || '').trim());
+  const hasComponents = buttons.length || selects.length;
+
+  els.embedPreviewChannel.textContent = selectedEmbedChannelLabel(payload.channelId);
+
+  if (!hasContent && !hasEmbed && !hasComponents) {
+    els.embedPreviewCanvas.innerHTML = `
+      <div class="embed-preview-empty">
+        <strong>Nothing to preview</strong>
+        <span>Draft is empty.</span>
+      </div>
+    `;
+    return;
+  }
+
+  els.embedPreviewCanvas.innerHTML = `
+    <div class="discord-message">
+      <div class="discord-avatar">${escapeHtml(initials(els.botTag.textContent || 'BD'))}</div>
+      <div class="discord-message-body">
+        <div class="discord-message-head">
+          <strong>${escapeHtml(els.botTag.textContent || 'Discord Bot')}</strong>
+          <span>Today at ${escapeHtml(previewTime())}</span>
+        </div>
+        ${hasContent ? `<div class="discord-content">${escapeHtml(payload.content).replace(/\n/g, '<br>')}</div>` : ''}
+        ${hasEmbed ? embedPreviewMarkup(embed) : ''}
+        ${hasComponents ? componentPreviewMarkup(buttons, selects) : ''}
+      </div>
+    </div>
+  `;
+}
+
+function buildEmbedPreviewPayload() {
+  if (!els.embedUseJsonInput.checked) return buildEmbedPayloadFromForm();
+  const payload = normalizeEmbedJsonPayload(parseEmbedJsonPayload());
+  payload.channelId = payload.channelId || els.embedChannelSelect.value;
+  return payload;
+}
+
+function selectedEmbedChannelLabel(channelId = els.embedChannelSelect.value) {
+  const option = [...els.embedChannelSelect.options].find((item) => item.value === channelId) || els.embedChannelSelect.selectedOptions?.[0];
+  return option?.textContent ? `#${option.textContent.trim().replace(/^#/, '')}` : 'No channel selected';
+}
+
+function hasVisibleEmbedPreview(embed) {
+  if (!embed || typeof embed !== 'object') return false;
+  return Boolean(
+    embed.title ||
+    embed.description ||
+    urlValue(embed.thumbnail) ||
+    urlValue(embed.image) ||
+    embed.author?.name ||
+    embed.footer?.text ||
+    (Array.isArray(embed.fields) && embed.fields.some((field) => field.name || field.value))
+  );
+}
+
+function embedPreviewMarkup(embed) {
+  const color = previewEmbedColor(embed.color);
+  const fields = Array.isArray(embed.fields) ? embed.fields.filter((field) => field.name || field.value) : [];
+  const thumbnail = urlValue(embed.thumbnail);
+  const image = urlValue(embed.image);
+  const authorName = embed.author?.name || '';
+  const footerText = embed.footer?.text || '';
+  return `
+    <article class="discord-embed" style="--embed-color:${escapeAttribute(color)}">
+      <div class="discord-embed-main">
+        ${authorName ? `<div class="discord-embed-author">${escapeHtml(authorName)}</div>` : ''}
+        ${embed.title ? `<strong class="discord-embed-title">${escapeHtml(embed.title)}</strong>` : ''}
+        ${embed.description ? `<div class="discord-embed-description">${escapeHtml(embed.description).replace(/\n/g, '<br>')}</div>` : ''}
+        ${fields.length ? `
+          <div class="discord-embed-fields">
+            ${fields.map((field) => `
+              <div class="discord-embed-field ${field.inline ? 'is-inline' : ''}">
+                <strong>${escapeHtml(field.name || 'Field')}</strong>
+                <span>${escapeHtml(field.value || '-').replace(/\n/g, '<br>')}</span>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${isPreviewImageUrl(image) ? `<img class="discord-embed-image" src="${escapeAttribute(image)}" alt="">` : ''}
+        ${footerText ? `<div class="discord-embed-footer">${escapeHtml(footerText)}</div>` : ''}
+      </div>
+      ${isPreviewImageUrl(thumbnail) ? `<img class="discord-embed-thumbnail" src="${escapeAttribute(thumbnail)}" alt="">` : ''}
+    </article>
+  `;
+}
+
+function componentPreviewMarkup(buttons, selects) {
+  return `
+    <div class="discord-components">
+      ${buttons.length ? `
+        <div class="discord-button-row">
+          ${buttons.slice(0, 5).map((button) => `
+            <button class="discord-button is-${escapeAttribute(buttonStyleFromDiscord(button.style))}" type="button" disabled>
+              ${button.emoji ? `<span>${escapeHtml(button.emoji)}</span>` : ''}
+              ${escapeHtml(button.label || 'Button')}
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${selects.map((select) => `
+        <div class="discord-select-preview">
+          <span>${escapeHtml(select.placeholder || 'Choose an option')}</span>
+          <small>${formatNumber(Array.isArray(select.options) ? select.options.length : 0)} options</small>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function previewEmbedColor(value) {
+  return colorInputValue(value) || '#5865f2';
+}
+
+function isPreviewImageUrl(value) {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function previewTime() {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date());
 }
 
 function buildEmbedPayloadFromForm() {
@@ -938,24 +1530,82 @@ function renderConfig(config) {
     <tr class="${row.critical && row.empty ? 'config-risk' : ''}">
       <td>
         <strong>${escapeHtml(row.label)}</strong><br>
-        <span class="muted">${escapeHtml(row.key)} - ${escapeHtml(typeLabel(row.type))}</span>
+        <span class="muted">${escapeHtml(typeLabel(row.type))}${row.critical ? ' - Required' : ''}</span>
       </td>
       <td>
         <div class="config-cell">
-          <span>${escapeHtml(row.display)}</span>
-          ${row.picker ? `<button class="secondary-button compact" type="button" data-config-pick="${escapeAttribute(row.key)}">Pick</button>` : ''}
+          ${configConfiguredMarkup(row)}
+          ${row.editable ? configActionButton(row) : ''}
         </div>
       </td>
     </tr>
   `).join('');
 
-  els.configTable.querySelectorAll('[data-config-pick]').forEach((button) => {
+  els.configTable.querySelectorAll('[data-config-edit]').forEach((button) => {
     button.addEventListener('click', () => {
-      els.configKeySelect.value = button.dataset.configPick;
+      els.configKeySelect.value = button.dataset.configEdit;
       syncConfigEditor();
-      openConfigPicker();
+      if (button.dataset.configOpenPicker === 'true') {
+        openConfigPicker();
+      } else {
+        els.configForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     });
   });
+
+  els.configTable.querySelectorAll('[data-config-toggle]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const key = button.dataset.configToggle;
+      const next = button.dataset.configNext === 'true';
+      try {
+        await saveConfigValue(key, next);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function configConfiguredMarkup(row) {
+  if (row.type === 'boolean') return booleanConfigButton(row);
+  const display = configChoiceLabel(row);
+  const stateClass = row.empty ? 'is-off' : row.critical ? 'is-warn' : 'is-on';
+  return `
+    <span class="config-choice-label">
+      <span class="state-chip ${stateClass}">${escapeHtml(row.empty ? 'Missing' : choiceKindLabel(row))}</span>
+      <strong>${escapeHtml(display)}</strong>
+    </span>
+  `;
+}
+
+function configActionButton(row) {
+  if (row.type === 'boolean') return '';
+  const label = row.picker ? `Choose ${choiceKindLabel(row).toLowerCase()}` : 'Open';
+  return `
+    <button
+      class="secondary-button compact"
+      type="button"
+      data-config-edit="${escapeAttribute(row.key)}"
+      data-config-open-picker="${row.picker ? 'true' : 'false'}"
+    >
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function booleanConfigButton(row) {
+  const enabled = Boolean(row.value);
+  return `
+    <button
+      class="state-chip ${enabled ? 'is-on' : 'is-off'}"
+      type="button"
+      data-config-toggle="${escapeAttribute(row.key)}"
+      data-config-next="${enabled ? 'false' : 'true'}"
+    >
+      ${enabled ? 'Enabled' : 'Disabled'}
+    </button>
+  `;
 }
 
 function syncConfigEditor() {
@@ -963,12 +1613,46 @@ function syncConfigEditor() {
   const row = state.guildDetail.config.find((item) => item.key === els.configKeySelect.value);
   if (!row) {
     els.configValueInput.value = '';
+    els.configTextField?.classList.add('is-hidden');
+    els.configChoicePanel.innerHTML = choicePanelMarkup(null);
     els.configPickerButton.disabled = true;
     return;
   }
+  const isBoolean = row.type === 'boolean';
+  const isPicker = Boolean(row.picker);
   els.configValueInput.value = configInputValue(row.value);
-  els.configPickerButton.disabled = !row.picker;
-  els.configPickerButton.textContent = row.picker ? 'Pick' : 'Manual';
+  els.configTextField?.classList.toggle('is-hidden', isBoolean || isPicker);
+  els.configBooleanInput.classList.toggle('is-hidden', !isBoolean);
+  els.configChoicePanel.innerHTML = choicePanelMarkup(row);
+  if (isBoolean) setBooleanControlValue(Boolean(row.value));
+  els.configPickerButton.classList.toggle('is-hidden', !isPicker);
+  els.configPickerButton.disabled = !isPicker;
+  els.configPickerButton.textContent = isPicker ? `Choose ${choiceKindLabel(row).toLowerCase()}` : 'Open';
+  const submitButton = els.configForm.querySelector('button[type="submit"]');
+  submitButton?.classList.toggle('is-hidden', isPicker);
+  if (submitButton) submitButton.textContent = isBoolean ? 'Save state' : 'Save setting';
+}
+
+function setBooleanControlValue(enabled) {
+  els.configBooleanInput.querySelectorAll('[data-boolean-value]').forEach((button) => {
+    button.classList.toggle('is-active', (button.dataset.booleanValue === 'true') === enabled);
+  });
+}
+
+function selectedBooleanConfigValue() {
+  const selected = els.configBooleanInput.querySelector('[data-boolean-value].is-active');
+  return selected?.dataset.booleanValue === 'true';
+}
+
+async function saveConfigValue(key, value) {
+  const detail = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/config`, {
+    method: 'POST',
+    body: { key, value }
+  });
+  state.guildDetail = detail;
+  renderGuildDetail(detail);
+  await loadOverview(false);
+  showToast('Setting saved.');
 }
 
 function typeLabel(type) {
@@ -979,6 +1663,7 @@ function typeLabel(type) {
     'role-list': 'roles',
     'user-list': 'users',
     style: 'style',
+    action: 'action',
     boolean: 'toggle',
     number: 'number',
     json: 'json',
@@ -988,11 +1673,212 @@ function typeLabel(type) {
   return labels[type] || type || 'value';
 }
 
+function choiceKindLabel(row) {
+  if (row?.key === 'invite_role_mappings') return 'Invite roles';
+  const labels = {
+    channel: 'Channel',
+    'channel-list': 'Channels',
+    role: 'Role',
+    'role-list': 'Roles',
+    'user-list': 'Users',
+    style: 'Style',
+    action: 'Action',
+    number: 'Number',
+    json: 'Advanced',
+    message: 'Message',
+    text: 'Text'
+  };
+  return labels[row?.type] || 'Choice';
+}
+
+function configChoiceLabel(row) {
+  if (!row) return 'No setting selected';
+  if (row.empty) return emptyChoiceLabel(row);
+  if (row.key === 'invite_role_mappings') return 'Invite role mappings saved';
+  if (row.picker) {
+    const options = state.guildDetail?.options?.[row.picker] || [];
+    const labels = listConfigInputValues(row.value).map((id) => {
+      const option = options.find((item) => String(item.id) === String(id));
+      return option?.label || null;
+    }).filter(Boolean);
+    if (labels.length) return labels.join(', ');
+    return row.display && !looksLikeRawId(row.display) ? row.display : 'Configured';
+  }
+  const labels = {
+    number: 'Number set',
+    json: 'Advanced setting set',
+    message: 'Message saved',
+    text: 'Custom text saved'
+  };
+  return labels[row.type] || 'Configured';
+}
+
+function emptyChoiceLabel(row) {
+  if (row?.key === 'invite_role_mappings') return 'Add invite roles';
+  const labels = {
+    channel: 'Choose a channel',
+    'channel-list': 'Choose channels',
+    role: 'Choose a role',
+    'role-list': 'Choose roles',
+    'user-list': 'Choose users',
+    style: 'Choose a style',
+    action: 'Choose an action',
+    number: 'Enter a number',
+    json: 'Add advanced data',
+    message: 'Write a message',
+    text: 'Add text'
+  };
+  return labels[row?.type] || 'Choose a value';
+}
+
+function choicePanelMarkup(row) {
+  if (!row) {
+    return `
+      <span>Current choice</span>
+      <strong>No setting selected</strong>
+      <small>Setting</small>
+    `;
+  }
+  if (row.type === 'boolean') {
+    return `
+      <span>Current state</span>
+      <strong>${Boolean(row.value) ? 'Enabled' : 'Disabled'}</strong>
+      <small>Toggle</small>
+    `;
+  }
+  return `
+    <span>Current choice</span>
+    <strong>${escapeHtml(configChoiceLabel(row))}</strong>
+    <small>${escapeHtml(choiceKindLabel(row))}</small>
+  `;
+}
+
+function looksLikeRawId(value) {
+  return /^[\d,\s]+$/.test(String(value || '').trim());
+}
+
 function configInputValue(value) {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
   return String(value);
+}
+
+function renderServerControlCenter(detail) {
+  const categories = detail.options?.categories || [];
+  const channels = detail.options?.channels || [];
+  const roles = detail.options?.roles || [];
+
+  fillSelect(els.channelCreateCategorySelect, categories, 'No category', false);
+  fillSelect(els.channelManageSelect, channels, 'Choose a channel', true);
+  fillSelect(els.channelManageCategorySelect, categories, 'No category', false);
+  fillSelect(els.categoryManageSelect, categories, 'Choose a category', true);
+  fillSelect(els.roleManageSelect, roles, 'Choose a role', true);
+
+  if (document.activeElement !== els.serverNameInput) {
+    els.serverNameInput.value = detail.guild?.name || '';
+  }
+
+  els.serverControlStatus.textContent = `${formatNumber(channels.length)} channels - ${formatNumber(categories.length)} categories - ${formatNumber(roles.length)} roles`;
+  syncChannelManager();
+  syncCategoryManager();
+  syncRoleManager();
+}
+
+function syncChannelManager() {
+  const channel = selectedDashboardOption('channels', els.channelManageSelect.value);
+  const disabled = !channel;
+  els.channelManageNameInput.disabled = disabled;
+  els.channelManageCategorySelect.disabled = disabled;
+  els.channelManageTopicInput.disabled = disabled;
+  els.channelManageSlowmodeInput.disabled = disabled;
+  els.channelManageLockSelect.disabled = disabled;
+  els.channelRenameButton.disabled = disabled;
+  els.channelUpdateButton.disabled = disabled;
+  els.channelDeleteButton.disabled = disabled;
+  if (!channel) {
+    els.channelManageNameInput.value = '';
+    els.channelManageTopicInput.value = '';
+    els.channelManageSlowmodeInput.value = '0';
+    els.channelManageLockSelect.value = 'keep';
+    return;
+  }
+  if (document.activeElement !== els.channelManageNameInput) {
+    els.channelManageNameInput.value = channel.label || '';
+  }
+  if (document.activeElement !== els.channelManageTopicInput) {
+    els.channelManageTopicInput.value = channel.topic || '';
+  }
+  if (document.activeElement !== els.channelManageSlowmodeInput) {
+    els.channelManageSlowmodeInput.value = String(channel.slowmode || 0);
+  }
+  setSelectValue(els.channelManageCategorySelect, channel.parentId || '');
+  if (els.channelManageLockSelect.value !== 'lock' && els.channelManageLockSelect.value !== 'unlock') {
+    els.channelManageLockSelect.value = 'keep';
+  }
+}
+
+function syncCategoryManager() {
+  const category = selectedDashboardOption('categories', els.categoryManageSelect.value);
+  const disabled = !category;
+  els.categoryManageNameInput.disabled = disabled;
+  els.categoryRenameButton.disabled = disabled;
+  els.categoryDeleteButton.disabled = disabled;
+  if (!category) {
+    els.categoryManageNameInput.value = '';
+    return;
+  }
+  if (document.activeElement !== els.categoryManageNameInput) {
+    els.categoryManageNameInput.value = category.label || '';
+  }
+}
+
+function syncRoleManager() {
+  const role = selectedDashboardOption('roles', els.roleManageSelect.value);
+  const disabled = !role;
+  els.roleManageNameInput.disabled = disabled;
+  els.roleRenameButton.disabled = disabled;
+  els.roleDeleteButton.disabled = disabled;
+  if (!role) {
+    els.roleManageNameInput.value = '';
+    return;
+  }
+  if (document.activeElement !== els.roleManageNameInput) {
+    els.roleManageNameInput.value = role.label || '';
+  }
+}
+
+function selectedDashboardOption(type, id) {
+  return (state.guildDetail?.options?.[type] || []).find((item) => item.id === id) || null;
+}
+
+async function runSelectedGuildAction(payload, options = {}) {
+  if (!state.selectedGuildId) return null;
+  const button = options.button || null;
+  if (button) button.disabled = true;
+  if (els.serverControlStatus) els.serverControlStatus.textContent = 'Working...';
+  try {
+    const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/action`, {
+      method: 'POST',
+      body: payload
+    });
+    if (response.detail) {
+      state.guildDetail = response.detail;
+      renderGuildDetail(response.detail);
+    }
+    if (typeof options.onSuccess === 'function') options.onSuccess(response);
+    const message = response.message || `${payload.action} complete.`;
+    if (els.serverControlStatus) els.serverControlStatus.textContent = message;
+    showToast(message);
+    await loadOverview(false).catch(() => null);
+    return response;
+  } catch (err) {
+    if (els.serverControlStatus) els.serverControlStatus.textContent = err.message || 'Action failed.';
+    showToast(err.message || 'Server action failed.');
+    return null;
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function renderServerActions(guild) {
@@ -1011,20 +1897,7 @@ function renderServerActions(guild) {
 
   els.serverActionBar.querySelectorAll('[data-guild-action]').forEach((button) => {
     button.addEventListener('click', async () => {
-      button.disabled = true;
-      try {
-        const response = await request(`/api/guilds/${encodeURIComponent(guild.id)}/action`, {
-          method: 'POST',
-          body: { action: button.dataset.guildAction }
-        });
-        if (response.detail) {
-          state.guildDetail = response.detail;
-          renderGuildDetail(response.detail);
-        }
-        showToast(`${button.dataset.guildAction} updated ${response.updatedChannels || 0} channels.`);
-      } finally {
-        button.disabled = false;
-      }
+      await runSelectedGuildAction({ action: button.dataset.guildAction }, { button });
     });
   });
 
@@ -1153,11 +2026,24 @@ function renderPickerList() {
   });
 }
 
-function applyPickerSelection() {
+async function applyPickerSelection() {
   if (!state.picker) return;
-  const values = [...state.picker.selected];
-  els.configValueInput.value = state.picker.row.multiple ? values.join(', ') : (values[0] || '');
-  closePicker();
+  const picker = state.picker;
+  const values = [...picker.selected];
+  const value = picker.row.multiple ? values : (values[0] || '');
+  els.configValueInput.value = Array.isArray(value) ? value.join(', ') : value;
+  els.configChoicePanel.innerHTML = choicePanelMarkup({
+    ...picker.row,
+    value,
+    empty: values.length === 0
+  });
+  els.pickerApplyButton.disabled = true;
+  try {
+    closePicker();
+    await saveConfigValue(picker.row.key, value);
+  } finally {
+    els.pickerApplyButton.disabled = false;
+  }
 }
 
 function listConfigInputValues(value) {
@@ -1186,19 +2072,44 @@ function renderCases(items) {
   `);
 }
 
-function renderTickets(panels, tickets) {
-  const rows = [
-    ...panels.map((panel) => ({ kind: 'Panel', title: panel.name, meta: panel.supportRole, detail: panel.description || panel.panelId })),
-    ...tickets.map((ticket) => ({ kind: ticket.status, title: ticket.userLabel, meta: ticket.channelLabel, detail: formatDate(ticket.openedAt) }))
-  ];
-
-  els.ticketList.innerHTML = listHtml(rows, 'No tickets or panels.', (item) => `
-    <div class="data-row">
-      <strong>${escapeHtml(item.kind)} - ${escapeHtml(item.title)}</strong>
-      <span>${escapeHtml(item.meta || 'No metadata')}</span>
-      <small>${escapeHtml(item.detail || '')}</small>
+function renderTicketPanelList(panels) {
+  const panelRows = (panels || []).map((panel) => `
+    <div class="ticket-panel-row">
+      <div>
+        <strong>${escapeHtml(panel.name)}</strong>
+        <span>${escapeHtml(panel.description || panel.panelId)}</span>
+        <small>${escapeHtml(panel.panelChannel)} - ${escapeHtml(panel.supportRole)} - ${escapeHtml(panel.category)} - ${escapeHtml(panel.panelId)}</small>
+      </div>
+      <div class="ticket-row-actions">
+        <span class="state-chip ${panel.mode === 'channel' ? 'is-warn' : 'is-on'}">${panel.mode === 'channel' ? 'Channels' : 'Threads'}</span>
+        <button class="secondary-button compact" type="button" data-ticket-edit="${escapeAttribute(panel.panelId)}">Edit</button>
+      </div>
     </div>
   `);
+
+  els.ticketPanelList.innerHTML = panelRows.join('') || '<div class="empty-state">No ticket panels yet.</div>';
+
+  els.ticketPanelList.querySelectorAll('[data-ticket-edit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const panel = (state.guildDetail?.ticketPanels || []).find((item) => item.panelId === button.dataset.ticketEdit);
+      if (!panel) return;
+      fillTicketPanelForm(panel);
+      els.ticketPanelForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showToast(`Editing ${panel.name}.`);
+    });
+  });
+}
+
+function renderTickets(tickets) {
+  const ticketRows = (tickets || []).map((ticket) => `
+    <div class="data-row ticket-activity-row">
+      <strong>${escapeHtml(ticket.userLabel)}</strong>
+      <span>${escapeHtml(ticket.channelLabel)} - ${escapeHtml(ticket.panelId)}</span>
+      <small>${escapeHtml(ticket.status)} - opened ${formatDate(ticket.openedAt)}${ticket.closedAt ? ` - closed ${formatDate(ticket.closedAt)}` : ''}</small>
+    </div>
+  `);
+
+  els.ticketList.innerHTML = ticketRows.join('') || '<div class="empty-state">No ticket activity yet.</div>';
 }
 
 function renderScheduled(detail) {
@@ -1302,8 +2213,11 @@ function setView(view) {
   document.querySelectorAll('.view').forEach((section) => {
     section.classList.toggle('is-hidden', section.id !== `${view}View`);
   });
-  if (view === 'server' && state.selectedGuildId && !state.guildDetail) {
+  if (['server', 'tickets'].includes(view) && state.selectedGuildId && !state.guildDetail) {
     loadGuild(state.selectedGuildId).catch((err) => showToast(err.message));
+  }
+  if (view === 'commands') {
+    renderCommandCatalog(state.overview?.commandCatalog || []);
   }
 }
 
@@ -1327,6 +2241,8 @@ function renderDashboardError(err) {
   els.runtimeStamp.textContent = '';
   els.runtimeControls.innerHTML = '<div class="empty-state full-width">Runtime data unavailable.</div>';
   els.commandUsage.innerHTML = '<div class="empty-state">Command usage unavailable.</div>';
+  els.commandCatalog.innerHTML = '<div class="empty-state">Command catalog unavailable.</div>';
+  els.commandCategoryList.innerHTML = '<div class="empty-state">Categories unavailable.</div>';
   els.botBans.innerHTML = '<div class="empty-state">Watchlist unavailable.</div>';
   els.guildList.innerHTML = '<div class="empty-state">Server data unavailable.</div>';
   els.databasePath.textContent = '';

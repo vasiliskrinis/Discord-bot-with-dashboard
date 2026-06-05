@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=5">
+    <link rel="stylesheet" href="styles.css?v=14">
   </head>
   <body>
     <div id="loginView" class="login-view is-hidden">
@@ -52,6 +52,8 @@
         <div class="tabs" role="tablist" aria-label="Dashboard views">
           <button class="tab is-active" type="button" data-view="overview">Overview</button>
           <button class="tab" type="button" data-view="server">Server</button>
+          <button class="tab" type="button" data-view="tickets">Tickets</button>
+          <button class="tab" type="button" data-view="commands">Commands</button>
           <button class="tab" type="button" data-view="owner">Owner</button>
           <button class="tab" type="button" data-view="data">Data</button>
         </div>
@@ -123,90 +125,250 @@
           <div id="serverHeader" class="server-header"></div>
           <div id="serverActionBar" class="action-bar"></div>
 
+          <section class="panel server-control-panel">
+            <div class="panel-head">
+              <h2>Server Control Center</h2>
+              <span id="serverControlStatus" class="muted"></span>
+            </div>
+            <div class="server-control-grid">
+              <form id="channelCreateForm" class="control-form control-card">
+                <h3 class="wide">Create Channel</h3>
+                <label>
+                  Type
+                  <select id="channelCreateTypeSelect">
+                    <option value="text">Text</option>
+                    <option value="voice">Voice</option>
+                    <option value="announcement">Announcement</option>
+                    <option value="forum">Forum</option>
+                    <option value="stage">Stage</option>
+                  </select>
+                </label>
+                <label>
+                  Name
+                  <input id="channelCreateNameInput" type="text" maxlength="100" placeholder="announcements">
+                </label>
+                <label>
+                  Category
+                  <select id="channelCreateCategorySelect"></select>
+                </label>
+                <label>
+                  Slowmode
+                  <input id="channelCreateSlowmodeInput" type="number" min="0" max="21600" value="0">
+                </label>
+                <label class="wide">
+                  Topic
+                  <input id="channelCreateTopicInput" type="text" maxlength="1024">
+                </label>
+                <button class="primary-button wide" type="submit">Create Channel</button>
+              </form>
+
+              <form id="channelManageForm" class="control-form control-card">
+                <h3 class="wide">Manage Channel</h3>
+                <label class="wide">
+                  Channel
+                  <select id="channelManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="channelManageNameInput" type="text" maxlength="100">
+                </label>
+                <label>
+                  Category
+                  <select id="channelManageCategorySelect"></select>
+                </label>
+                <label>
+                  Slowmode
+                  <input id="channelManageSlowmodeInput" type="number" min="0" max="21600" value="0">
+                </label>
+                <label>
+                  Send Messages
+                  <select id="channelManageLockSelect">
+                    <option value="keep">No change</option>
+                    <option value="unlock">Unlocked</option>
+                    <option value="lock">Locked</option>
+                  </select>
+                </label>
+                <label class="wide">
+                  Topic
+                  <input id="channelManageTopicInput" type="text" maxlength="1024">
+                </label>
+                <div class="button-row wide">
+                  <button id="channelRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="channelUpdateButton" class="secondary-button" type="button">Update</button>
+                  <button id="channelDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="categoryCreateForm" class="control-form control-card compact-card">
+                <h3 class="wide">Create Category</h3>
+                <label class="wide">
+                  Name
+                  <input id="categoryCreateNameInput" type="text" maxlength="100" placeholder="Support">
+                </label>
+                <button class="primary-button wide" type="submit">Create Category</button>
+              </form>
+
+              <form id="categoryManageForm" class="control-form control-card compact-card">
+                <h3 class="wide">Manage Category</h3>
+                <label>
+                  Category
+                  <select id="categoryManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="categoryManageNameInput" type="text" maxlength="100">
+                </label>
+                <div class="button-row wide">
+                  <button id="categoryRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="categoryDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="roleCreateForm" class="control-form control-card compact-card">
+                <h3 class="wide">Create Role</h3>
+                <label>
+                  Name
+                  <input id="roleCreateNameInput" type="text" maxlength="100" placeholder="Moderator">
+                </label>
+                <label>
+                  Color
+                  <input id="roleCreateColorInput" type="color" value="#5865f2">
+                </label>
+                <label class="check-row">
+                  <input id="roleCreateHoistInput" type="checkbox">
+                  Display
+                </label>
+                <label class="check-row">
+                  <input id="roleCreateMentionableInput" type="checkbox">
+                  Mentionable
+                </label>
+                <button class="primary-button wide" type="submit">Create Role</button>
+              </form>
+
+              <form id="roleManageForm" class="control-form control-card compact-card">
+                <h3 class="wide">Manage Role</h3>
+                <label>
+                  Role
+                  <select id="roleManageSelect"></select>
+                </label>
+                <label>
+                  Name
+                  <input id="roleManageNameInput" type="text" maxlength="100">
+                </label>
+                <div class="button-row wide">
+                  <button id="roleRenameButton" class="secondary-button" type="button">Rename</button>
+                  <button id="roleDeleteButton" class="danger-button" type="button">Delete</button>
+                </div>
+              </form>
+
+              <form id="serverRenameForm" class="control-form control-card compact-card">
+                <h3 class="wide">Server Identity</h3>
+                <label class="wide">
+                  Server name
+                  <input id="serverNameInput" type="text" maxlength="100">
+                </label>
+                <button class="primary-button wide" type="submit">Rename Server</button>
+              </form>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="panel-head">
               <h2>Custom Embed Sender</h2>
               <span id="embedResult" class="muted"></span>
             </div>
-            <form id="embedForm" class="embed-builder">
-              <label>
-                Channel
-                <select id="embedChannelSelect"></select>
-              </label>
-              <label class="wide">
-                Message Content
-                <textarea id="embedContentInput" rows="2" maxlength="1900"></textarea>
-              </label>
-              <label>
-                Title
-                <input id="embedTitleInput" type="text" maxlength="256" value="Mission Briefing">
-              </label>
-              <label>
-                Color
-                <input id="embedColorInput" type="color" value="#5865f2">
-              </label>
-              <label class="wide">
-                Description
-                <textarea id="embedDescriptionInput" rows="5" maxlength="4000">Customize this embed from the dashboard.</textarea>
-              </label>
-              <label>
-                Thumbnail URL
-                <input id="embedThumbnailInput" type="url" maxlength="2048">
-              </label>
-              <label>
-                Image URL
-                <input id="embedImageInput" type="url" maxlength="2048">
-              </label>
-              <label>
-                Author
-                <input id="embedAuthorInput" type="text" maxlength="256">
-              </label>
-              <label>
-                Footer
-                <input id="embedFooterInput" type="text" maxlength="2048">
-              </label>
+            <div class="embed-workbench">
+              <form id="embedForm" class="embed-builder">
+                <label>
+                  Channel
+                  <select id="embedChannelSelect"></select>
+                </label>
+                <label class="wide">
+                  Message Content
+                  <textarea id="embedContentInput" rows="2" maxlength="1900"></textarea>
+                </label>
+                <label>
+                  Title
+                  <input id="embedTitleInput" type="text" maxlength="256" placeholder="Embed title">
+                </label>
+                <label>
+                  Color
+                  <input id="embedColorInput" type="color" value="#5865f2">
+                </label>
+                <label class="wide">
+                  Description
+                  <textarea id="embedDescriptionInput" rows="5" maxlength="4000" placeholder="Embed description"></textarea>
+                </label>
+                <label>
+                  Thumbnail URL
+                  <input id="embedThumbnailInput" type="url" maxlength="2048">
+                </label>
+                <label>
+                  Image URL
+                  <input id="embedImageInput" type="url" maxlength="2048">
+                </label>
+                <label>
+                  Author
+                  <input id="embedAuthorInput" type="text" maxlength="256">
+                </label>
+                <label>
+                  Footer
+                  <input id="embedFooterInput" type="text" maxlength="2048">
+                </label>
 
-              <div class="builder-section wide">
-                <div class="builder-head">
-                  <h3>Fields</h3>
-                  <button id="addEmbedFieldButton" class="secondary-button compact" type="button">Add Field</button>
+                <div class="builder-section wide">
+                  <div class="builder-head">
+                    <h3>Fields</h3>
+                    <button id="addEmbedFieldButton" class="secondary-button compact" type="button">Add Field</button>
+                  </div>
+                  <div id="embedFieldList" class="builder-list"></div>
                 </div>
-                <div id="embedFieldList" class="builder-list"></div>
-              </div>
 
-              <div class="builder-section wide">
-                <div class="builder-head">
-                  <h3>Buttons</h3>
-                  <button id="addEmbedButtonButton" class="secondary-button compact" type="button">Add Button</button>
+                <div class="builder-section wide">
+                  <div class="builder-head">
+                    <h3>Buttons</h3>
+                    <button id="addEmbedButtonButton" class="secondary-button compact" type="button">Add Button</button>
+                  </div>
+                  <div id="embedButtonList" class="builder-list"></div>
                 </div>
-                <div id="embedButtonList" class="builder-list"></div>
-              </div>
 
-              <div class="builder-section wide">
-                <div class="builder-head">
-                  <h3>Dropdown Menus</h3>
-                  <button id="addEmbedSelectButton" class="secondary-button compact" type="button">Add Menu</button>
+                <div class="builder-section wide">
+                  <div class="builder-head">
+                    <h3>Dropdown Menus</h3>
+                    <button id="addEmbedSelectButton" class="secondary-button compact" type="button">Add Menu</button>
+                  </div>
+                  <div id="embedSelectList" class="builder-list"></div>
                 </div>
-                <div id="embedSelectList" class="builder-list"></div>
-              </div>
 
-              <div class="builder-section wide">
-                <div class="builder-head">
-                  <h3>JSON Payload</h3>
-                  <label class="check-row json-toggle">
-                    <input id="embedUseJsonInput" type="checkbox">
-                    Send JSON
-                  </label>
+                <div class="builder-section wide">
+                  <div class="builder-head">
+                    <h3>JSON Payload</h3>
+                    <label class="check-row json-toggle">
+                      <input id="embedUseJsonInput" type="checkbox">
+                      Send JSON
+                    </label>
+                  </div>
+                  <textarea id="embedJsonInput" class="code-input" rows="10" spellcheck="false" placeholder='{"content":"Hello","embed":{"title":"Embed title"},"buttons":[],"selects":[]}'></textarea>
+                  <div class="json-actions">
+                    <button id="syncEmbedJsonButton" class="secondary-button compact" type="button">Build JSON From Menu</button>
+                    <button id="applyEmbedJsonButton" class="secondary-button compact" type="button">Load JSON Into Menu</button>
+                  </div>
                 </div>
-                <textarea id="embedJsonInput" class="code-input" rows="10" spellcheck="false" placeholder='{"content":"Hello","embed":{"title":"Mission Briefing"},"buttons":[],"selects":[]}'></textarea>
-                <div class="json-actions">
-                  <button id="syncEmbedJsonButton" class="secondary-button compact" type="button">Build JSON From Menu</button>
-                  <button id="applyEmbedJsonButton" class="secondary-button compact" type="button">Load JSON Into Menu</button>
-                </div>
-              </div>
 
-              <button type="submit">Send Embed</button>
-            </form>
+                <button type="submit">Send Embed</button>
+              </form>
+
+              <aside class="embed-preview-panel" aria-live="polite">
+                <div class="embed-preview-head">
+                  <div>
+                    <span>Preview</span>
+                    <strong id="embedPreviewChannel">No channel selected</strong>
+                  </div>
+                  <small id="embedPreviewStatus">Live</small>
+                </div>
+                <div id="embedPreviewCanvas" class="discord-preview"></div>
+              </aside>
+            </div>
           </section>
 
           <div class="content-grid">
@@ -216,14 +378,23 @@
               </div>
               <form id="configForm" class="config-form">
                 <label>
-                  Key
+                  Setting
                   <select id="configKeySelect"></select>
                 </label>
-                <button id="configPickerButton" class="secondary-button" type="button">Pick</button>
-                <label class="wide">
-                  Value
+                <button id="configPickerButton" class="secondary-button" type="button">Choose</button>
+                <div id="configChoicePanel" class="config-choice-panel wide">
+                  <span>Current choice</span>
+                  <strong>No setting selected</strong>
+                  <small>Setting</small>
+                </div>
+                <label id="configTextField" class="wide is-hidden">
+                  Text
                   <textarea id="configValueInput" rows="3"></textarea>
                 </label>
+                <div id="configBooleanInput" class="segmented-control wide is-hidden" role="group" aria-label="Boolean setting">
+                  <button class="is-active" type="button" data-boolean-value="true">Enabled</button>
+                  <button type="button" data-boolean-value="false">Disabled</button>
+                </div>
                 <button type="submit">Save</button>
               </form>
               <div class="table-wrap">
@@ -231,7 +402,7 @@
                   <thead>
                     <tr>
                       <th>Setting</th>
-                      <th>Value</th>
+                      <th>Configured</th>
                     </tr>
                   </thead>
                   <tbody id="configTable"></tbody>
@@ -247,7 +418,7 @@
             </section>
           </div>
 
-          <div class="content-grid three">
+          <div class="content-grid">
             <section class="panel">
               <div class="panel-head">
                 <h2>Recent Cases</h2>
@@ -257,16 +428,124 @@
 
             <section class="panel">
               <div class="panel-head">
-                <h2>Tickets</h2>
+                <h2>Scheduled</h2>
               </div>
-              <div id="ticketList" class="data-list"></div>
+              <div id="scheduledList" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="ticketsView" class="view is-hidden">
+          <div id="ticketsHeader" class="server-header"></div>
+          <div id="ticketStats" class="stat-grid compact-stats"></div>
+
+          <section class="panel ticket-studio">
+            <div class="panel-head">
+              <h2>Ticket Studio</h2>
+              <div class="panel-actions">
+                <span id="ticketPanelStatus" class="muted"></span>
+                <button id="ticketPanelNewButton" class="secondary-button compact" type="button">New Panel</button>
+              </div>
+            </div>
+            <form id="ticketPanelForm" class="ticket-form">
+              <label>
+                Panel ID
+                <input id="ticketPanelIdInput" type="text" maxlength="40" placeholder="support">
+              </label>
+              <label>
+                Panel name
+                <input id="ticketPanelNameInput" type="text" maxlength="80" placeholder="Support Tickets">
+              </label>
+              <div class="field-block">
+                <span>Open as</span>
+                <div class="segmented-control ticket-mode-control" role="group" aria-label="Ticket mode">
+                  <button class="is-active" type="button" data-ticket-mode="thread">Threads</button>
+                  <button type="button" data-ticket-mode="channel">Channels</button>
+                </div>
+                <input id="ticketPanelModeInput" type="hidden" value="thread">
+              </div>
+              <label>
+                Post panel in
+                <select id="ticketPanelChannelSelect"></select>
+              </label>
+              <label>
+                Ticket category
+                <select id="ticketPanelCategorySelect"></select>
+              </label>
+              <label>
+                Support role
+                <select id="ticketPanelRoleSelect"></select>
+              </label>
+              <label>
+                Button label
+                <input id="ticketPanelButtonLabelInput" type="text" maxlength="80" value="Open Ticket">
+              </label>
+              <label>
+                Button style
+                <select id="ticketPanelButtonStyleSelect">
+                  <option value="primary">Primary</option>
+                  <option value="secondary">Secondary</option>
+                  <option value="success">Success</option>
+                  <option value="danger">Danger</option>
+                </select>
+              </label>
+              <label class="wide">
+                Description
+                <textarea id="ticketPanelDescriptionInput" rows="3" maxlength="1500" placeholder="Open a ticket and the support team will help you."></textarea>
+              </label>
+              <label class="wide">
+                Panel content
+                <textarea id="ticketPanelContentInput" rows="2" maxlength="1900" placeholder="Optional text above the panel embed"></textarea>
+              </label>
+              <label class="wide">
+                Opening message
+                <textarea id="ticketPanelOpenMessageInput" rows="3" maxlength="1900" placeholder="{user} support will be with you soon."></textarea>
+              </label>
+              <label>
+                Close button
+                <input id="ticketPanelCloseLabelInput" type="text" maxlength="80" value="Close Ticket">
+              </label>
+              <label>
+                Delete button
+                <input id="ticketPanelDeleteLabelInput" type="text" maxlength="80" value="Delete Ticket">
+              </label>
+              <button class="primary-button wide" type="submit">Save Ticket Panel</button>
+            </form>
+          </section>
+
+          <div class="content-grid tickets-workspace">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Ticket Panels</h2>
+              </div>
+              <div id="ticketPanelList" class="ticket-panel-list"></div>
             </section>
 
             <section class="panel">
               <div class="panel-head">
-                <h2>Scheduled</h2>
+                <h2>Ticket Activity</h2>
               </div>
-              <div id="scheduledList" class="data-list"></div>
+              <div id="ticketList" class="data-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="commandsView" class="view is-hidden">
+          <section class="panel commands-hero">
+            <div>
+              <h2>Command Center</h2>
+              <p id="commandSummary">All registered slash commands, grouped by purpose.</p>
+            </div>
+            <div id="commandStats" class="mini-grid command-stats"></div>
+          </section>
+          <div class="commands-layout">
+            <aside id="commandCategoryList" class="command-category-list"></aside>
+            <section class="panel command-center">
+              <div class="panel-head">
+                <h2 id="commandCategoryTitle">All Commands</h2>
+                <span id="commandCategoryMeta" class="muted"></span>
+              </div>
+              <div id="commandCatalog" class="command-catalog"></div>
             </section>
           </div>
         </section>
@@ -386,6 +665,6 @@
         </div>
       </section>
     </div>
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=12"></script>
   </body>
 </html>

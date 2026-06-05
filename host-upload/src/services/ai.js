@@ -9,10 +9,16 @@ function stripBotMention(content, clientId) {
 async function askAI(prompt, options = {}) {
   const personality = options.personality || env.aiPersonality;
   const behavior = options.behavior || env.aiBehavior;
-  const systemSuffix = options.systemSuffix || 'Answer as a Discord bot. Keep plain text short unless asked for detail.';
+  const systemSuffix = options.systemSuffix || [
+    'Answer as a Discord bot with broad general knowledge across programming, science, history, games, Discord, and everyday questions.',
+    'Use the one-message conversation memory when it is provided, but do not invent facts you do not know.',
+    'If a question depends on live/current information or private server data you cannot see, say what you would need.',
+    'Keep plain text short unless asked for detail.'
+  ].join(' ');
   const promptStack = options.promptStack
     ? `\n\nActive server prompt stack:\n${options.promptStack}`
     : '';
+  const memoryMessages = aiMemoryMessages(options.memory);
 
   if (!env.hfApiKey) {
     return 'AI is configured, but HUGGING_FACE_API_KEY is missing in .env.';
@@ -34,6 +40,7 @@ async function askAI(prompt, options = {}) {
           role: 'system',
           content: `${personality}\n${behavior}${promptStack}\n${systemSuffix}`
         },
+        ...memoryMessages,
         {
           role: 'user',
           content: prompt
@@ -66,6 +73,28 @@ async function askAI(prompt, options = {}) {
   if (data?.generated_text) return data.generated_text.trim();
   if (data?.error) return `AI provider error: ${data.error}`;
   return 'AI did not return text.';
+}
+
+function aiMemoryMessages(memory) {
+  if (!memory) return [];
+  const messages = [];
+  const previousUser = cleanMemoryText(memory.user || memory.prompt || memory.previousUser, 1200);
+  const previousAssistant = cleanMemoryText(memory.assistant || memory.answer || memory.previousAssistant, 1200);
+  const referenced = cleanMemoryText(memory.referenced || memory.reference, 1000);
+
+  if (referenced) {
+    messages.push({
+      role: 'user',
+      content: `Previous Discord message being replied to:\n${referenced}`
+    });
+  }
+  if (previousUser) messages.push({ role: 'user', content: previousUser });
+  if (previousAssistant) messages.push({ role: 'assistant', content: previousAssistant });
+  return messages.slice(-3);
+}
+
+function cleanMemoryText(value, maxLength) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
 }
 
 function moderateText(content) {

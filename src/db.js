@@ -25,6 +25,7 @@ const DEFAULT_GUILD_CONFIG = {
   counting_channel: null,
   welcome_channel: null,
   welcome_message: 'Welcome {user} to {server}. You are member #{memberCount}.',
+  invite_role_mappings: [],
   member_count_voice: null,
   embed_style: 'sapphire',
   admin_users: [],
@@ -67,15 +68,77 @@ function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
+function processIsAlive(pid) {
+  const value = Number(pid);
+  if (!Number.isInteger(value) || value <= 0) return false;
+  try {
+    process.kill(value, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+function readLockOwner(lockPath) {
+  try {
+    return JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function releaseDatabaseLock(lockPath, pid) {
+  const owner = readLockOwner(lockPath);
+  if (owner?.pid === pid) {
+    fs.unlinkSync(lockPath);
+  }
+}
+
+function acquireDatabaseLock(filePath) {
+  const lockPath = `${filePath}.lock`;
+  const owner = readLockOwner(lockPath);
+  if (owner?.pid && owner.pid !== process.pid && processIsAlive(owner.pid)) {
+    throw new Error(`Another bot process is already using this database (PID ${owner.pid}). Stop it before starting a second copy.`);
+  }
+
+  if (owner) {
+    fs.unlinkSync(lockPath);
+  }
+
+  const fd = fs.openSync(lockPath, 'wx');
+  fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: Date.now(), filePath }));
+  fs.closeSync(fd);
+
+  const release = () => {
+    try {
+      releaseDatabaseLock(lockPath, process.pid);
+    } catch {
+      // Best-effort cleanup only; stale locks are checked on the next start.
+    }
+  };
+  process.once('exit', release);
+  process.once('SIGINT', () => {
+    release();
+    process.exit(130);
+  });
+  process.once('SIGTERM', () => {
+    release();
+    process.exit(143);
+  });
+  return release;
+}
+
 class BotDatabase {
   constructor(filePath) {
     const resolved = filePath === ':memory:' ? ':memory:' : path.resolve(process.cwd(), filePath);
     this.filePath = resolved;
     if (resolved !== ':memory:') {
       fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      this.releaseLock = acquireDatabaseLock(resolved);
     }
     this.db = new DatabaseSync(resolved);
     this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA busy_timeout = 5000;');
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.init();
   }
@@ -281,6 +344,15 @@ class BotDatabase {
         count INTEGER NOT NULL DEFAULT 0,
         last_used_at INTEGER NOT NULL,
         PRIMARY KEY (command_name, source, guild_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS invite_joins (
+        guild_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        inviter_id TEXT,
+        invite_code TEXT,
+        joined_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, member_id)
       );
 
       CREATE TABLE IF NOT EXISTS member_progress (
@@ -730,6 +802,50 @@ class BotDatabase {
          LIMIT ?`
       )
       .all(Math.max(1, Math.min(limit, 50)));
+  }
+
+  recordInviteJoin(guildId, memberId, inviterId, inviteCode, joinedAt = now()) {
+    this.db
+      .prepare(
+        `INSERT INTO invite_joins (guild_id, member_id, inviter_id, invite_code, joined_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(guild_id, member_id) DO UPDATE SET
+          inviter_id = excluded.inviter_id,
+          invite_code = excluded.invite_code,
+          joined_at = excluded.joined_at`
+      )
+      .run(guildId, memberId, inviterId || null, inviteCode || null, joinedAt);
+  }
+
+  inviteStats(guildId, inviterId, limit = 10) {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM invite_joins
+         WHERE guild_id = ? AND inviter_id = ?
+         ORDER BY joined_at DESC
+         LIMIT ?`
+      )
+      .all(guildId, inviterId, Math.max(1, Math.min(limit, 25)));
+    const total = this.db
+      .prepare('SELECT COUNT(*) AS count FROM invite_joins WHERE guild_id = ? AND inviter_id = ?')
+      .get(guildId, inviterId).count;
+    const codes = this.db
+      .prepare(
+        `SELECT invite_code, COUNT(*) AS count, MAX(joined_at) AS last_joined_at
+         FROM invite_joins
+         WHERE guild_id = ? AND inviter_id = ?
+         GROUP BY invite_code
+         ORDER BY count DESC, last_joined_at DESC`
+      )
+      .all(guildId, inviterId);
+    return { total, recent: rows, codes };
+  }
+
+  resetInviteStats(guildId, inviterId = null) {
+    const result = inviterId
+      ? this.db.prepare('DELETE FROM invite_joins WHERE guild_id = ? AND inviter_id = ?').run(guildId, inviterId)
+      : this.db.prepare('DELETE FROM invite_joins WHERE guild_id = ?').run(guildId);
+    return Number(result.changes || 0);
   }
 
   ensureMemberProgress(guildId, userId) {

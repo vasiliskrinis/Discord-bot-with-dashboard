@@ -28,6 +28,7 @@ const progression = require('./services/progression');
 const community = require('./services/community');
 const swat = require('./services/swat');
 const { createEmbedFromAI } = require('./services/ai');
+const inviteRoles = require('./services/inviteRoles');
 const { moderationLog } = require('./services/logger');
 
 const SETUP_CHANNELS = [
@@ -188,6 +189,7 @@ const SETUP_CLEAR_ITEMS = [
   ...SETUP_SINGLE_ROLES,
   ...SETUP_LISTS,
   { key: 'welcome_message', label: 'Welcome Message', description: 'Reset the welcome text template.' },
+  { key: 'invite_role_mappings', label: 'Invite Role Mappings', description: 'Remove all invite-to-role mappings.' },
   { key: 'sticky', label: 'Sticky Message', description: 'Delete the sticky message setting for this server.' }
 ];
 
@@ -228,7 +230,34 @@ const PREFIX_ALIASES = {
   stickymessage: 'sticky',
   channelrestriction: 'channel-restriction',
   masssynccategories: 'mass-sync-categories',
-  syncchannels: 'mass-sync-categories'
+  syncchannels: 'mass-sync-categories',
+  createchannel: 'channel-create',
+  channelcreate: 'channel-create',
+  renamechannel: 'channel-rename',
+  channelrename: 'channel-rename',
+  deletechannel: 'channel-delete',
+  channeldelete: 'channel-delete',
+  updatechannel: 'channel-update',
+  channelupdate: 'channel-update',
+  movechannel: 'channel-update',
+  createcategory: 'category-create',
+  categorycreate: 'category-create',
+  renamecategory: 'category-rename',
+  categoryrename: 'category-rename',
+  deletecategory: 'category-delete',
+  categorydelete: 'category-delete',
+  createrole: 'role-create',
+  rolecreate: 'role-create',
+  renamerole: 'role-rename',
+  rolerename: 'role-rename',
+  deleterole: 'role-delete',
+  roledelete: 'role-delete',
+  renameserver: 'server-rename',
+  serverrename: 'server-rename',
+  invite: 'invites',
+  invitescount: 'invites',
+  inviterole: 'invite-role',
+  inviteroles: 'invite-role'
 };
 
 const OWNER_ALIASES = {
@@ -272,7 +301,10 @@ const LOCKED_NORMAL_COMMANDS = new Set([
   'softban', 'mass-ban', 'purge', 'dm', 'say', 'lock', 'unlock', 'lockdown', 'unlockdown',
   'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user',
   'temp-role', 'temp-role-remove', 'set-nick', 'move', 'giveaway', 'steal-emoji',
-  'steal-sticker', 'embed-create'
+  'steal-sticker', 'embed-create', 'invite-role',
+  'channel-create', 'channel-rename', 'channel-delete', 'channel-update',
+  'category-create', 'category-rename', 'category-delete',
+  'role-create', 'role-rename', 'role-delete', 'server-rename'
 ]);
 
 const ACTIVITY_TYPES = {
@@ -282,6 +314,134 @@ const ACTIVITY_TYPES = {
   watching: ActivityType.Watching,
   competing: ActivityType.Competing
 };
+
+const CHANNEL_ADMIN_TYPES = {
+  text: ChannelType.GuildText,
+  voice: ChannelType.GuildVoice,
+  announcement: ChannelType.GuildAnnouncement,
+  forum: ChannelType.GuildForum,
+  stage: ChannelType.GuildStageVoice
+};
+
+const CHANNEL_ADMIN_CHANNEL_TYPES = [
+  ChannelType.GuildText,
+  ChannelType.GuildVoice,
+  ChannelType.GuildAnnouncement,
+  ChannelType.GuildForum,
+  ChannelType.GuildStageVoice
+];
+
+const SERVER_ADMIN_COMMANDS = new Set([
+  'channel-create',
+  'channel-rename',
+  'channel-delete',
+  'channel-update',
+  'category-create',
+  'category-rename',
+  'category-delete',
+  'role-create',
+  'role-rename',
+  'role-delete',
+  'server-rename'
+]);
+
+function serverAdminSlashCommands() {
+  const channelOption = (option) => option
+    .setName('channel')
+    .setDescription('Channel.')
+    .setRequired(true)
+    .addChannelTypes(...CHANNEL_ADMIN_CHANNEL_TYPES);
+  const categoryOption = (option) => option
+    .setName('category')
+    .setDescription('Category.')
+    .setRequired(true)
+    .addChannelTypes(ChannelType.GuildCategory);
+
+  return [
+    new SlashCommandBuilder()
+      .setName('channel-create')
+      .setDescription('Create a server channel.')
+      .addStringOption((option) => option.setName('type').setDescription('Channel type.').setRequired(true).addChoices(
+        { name: 'Text', value: 'text' },
+        { name: 'Voice', value: 'voice' },
+        { name: 'Announcement', value: 'announcement' },
+        { name: 'Forum', value: 'forum' },
+        { name: 'Stage', value: 'stage' }
+      ))
+      .addStringOption((option) => option.setName('name').setDescription('Channel name.').setRequired(true).setMaxLength(100))
+      .addChannelOption((option) => option.setName('category').setDescription('Parent category.').addChannelTypes(ChannelType.GuildCategory))
+      .addStringOption((option) => option.setName('topic').setDescription('Topic for text/forum channels.').setMaxLength(1024))
+      .addIntegerOption((option) => option.setName('slowmode').setDescription('Slowmode seconds.').setMinValue(0).setMaxValue(21600)),
+
+    new SlashCommandBuilder()
+      .setName('channel-rename')
+      .setDescription('Rename a server channel.')
+      .addChannelOption(channelOption)
+      .addStringOption((option) => option.setName('name').setDescription('New channel name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('channel-delete')
+      .setDescription('Delete a server channel.')
+      .addChannelOption(channelOption)
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm channel deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('channel-update')
+      .setDescription('Update channel category, topic, slowmode, or lock state.')
+      .addChannelOption(channelOption)
+      .addChannelOption((option) => option.setName('category').setDescription('New parent category.').addChannelTypes(ChannelType.GuildCategory))
+      .addStringOption((option) => option.setName('topic').setDescription('New topic.').setMaxLength(1024))
+      .addIntegerOption((option) => option.setName('slowmode').setDescription('Slowmode seconds.').setMinValue(0).setMaxValue(21600))
+      .addStringOption((option) => option.setName('send_messages').setDescription('Lock or unlock @everyone sending.').addChoices(
+        { name: 'No change', value: 'keep' },
+        { name: 'Locked', value: 'lock' },
+        { name: 'Unlocked', value: 'unlock' }
+      )),
+
+    new SlashCommandBuilder()
+      .setName('category-create')
+      .setDescription('Create a server category.')
+      .addStringOption((option) => option.setName('name').setDescription('Category name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('category-rename')
+      .setDescription('Rename a server category.')
+      .addChannelOption(categoryOption)
+      .addStringOption((option) => option.setName('name').setDescription('New category name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('category-delete')
+      .setDescription('Delete a server category.')
+      .addChannelOption(categoryOption)
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm category deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('role-create')
+      .setDescription('Create a server role.')
+      .addStringOption((option) => option.setName('name').setDescription('Role name.').setRequired(true).setMaxLength(100))
+      .addStringOption((option) => option.setName('color').setDescription('Hex color like #5865f2.'))
+      .addBooleanOption((option) => option.setName('display').setDescription('Display role separately.'))
+      .addBooleanOption((option) => option.setName('mentionable').setDescription('Allow members to mention this role.')),
+
+    new SlashCommandBuilder()
+      .setName('role-rename')
+      .setDescription('Rename a server role.')
+      .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
+      .addStringOption((option) => option.setName('name').setDescription('New role name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('role-delete')
+      .setDescription('Delete a server role.')
+      .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm role deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('server-rename')
+      .setDescription('Rename this server.')
+      .addStringOption((option) => option.setName('name').setDescription('New server name.').setRequired(true).setMinLength(2).setMaxLength(100))
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm server rename.').setRequired(true))
+  ];
+}
 
 function slashCommands() {
   const commands = [
@@ -655,6 +815,8 @@ function slashCommands() {
       .setName('mass-sync-categories')
       .setDescription('Sync all child channels with their category permissions.'),
 
+    ...serverAdminSlashCommands(),
+
     new SlashCommandBuilder()
       .setName('bump')
       .setDescription('Bump the server with the configured cooldown.'),
@@ -682,7 +844,35 @@ function slashCommands() {
           .addChannelOption((option) => option.setName('channel').setDescription('Q&A channel.').setRequired(true).addChannelTypes(ChannelType.GuildText))
           .addStringOption((option) => option.setName('personality').setDescription('How the bot should answer in Q&A.').setRequired(true))
       )
-      .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.'))
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.')),
+
+    new SlashCommandBuilder()
+      .setName('invite-role')
+      .setDescription('Give roles to members who join through specific invite codes.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Map an invite code or URL to a role.')
+          .addStringOption((option) => option.setName('invite').setDescription('Invite code or full invite URL.').setRequired(true))
+          .addRoleOption((option) => option.setName('role').setDescription('Role to give when this invite is used.').setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove an invite role mapping.')
+          .addStringOption((option) => option.setName('invite').setDescription('Invite code or full invite URL.').setRequired(true))
+      )
+      .addSubcommand((sub) => sub.setName('list').setDescription('List invite role mappings.')),
+
+    new SlashCommandBuilder()
+      .setName('invites')
+      .setDescription('Check your invite count, or a member invite count if you are a moderator.')
+      .addStringOption((option) => option.setName('action').setDescription('Check or reset tracked invites.').addChoices(
+        { name: 'check', value: 'check' },
+        { name: 'reset', value: 'reset' }
+      ))
+      .addUserOption((option) => option.setName('user').setDescription('Member to check/reset. Moderators only for other members.'))
+      .addBooleanOption((option) => option.setName('all').setDescription('Reset all tracked invite stats. Moderator only.'))
   ];
 
   return commands.map((command) => command.toJSON());
@@ -822,35 +1012,15 @@ function setupOverviewEmbed(db, guildId) {
     fields: [
       {
         name: 'Roles',
-        value: [
-          setupLine('Restrict perms', roleValue(config.restrict_perms_role)),
-          setupLine('Restricted role', roleValue(config.restricted_role)),
-          setupLine('Update ping', roleValue(config.update_ping_role)),
-          setupLine('Auto role', roleValue(config.auto_role))
-        ].join('\n')
+        value: setupConfiguredSection(SETUP_SINGLE_ROLES, config, roleValue)
       },
       {
         name: 'Channels',
-        value: [
-          setupLine('Restrict trap', channelValue(config.restrict_channel)),
-          setupLine('Advanced logs', channelValue(config.advanced_logs_channel)),
-          setupLine('Restrict logs', channelValue(config.restrict_logs_channel)),
-          setupLine('Restricted users', channelValue(config.restricted_users_channel)),
-          setupLine('Roblox updates', channelValue(config.roblox_updates_channel)),
-          setupLine('Executor updates', channelValue(config.executor_updates_channel)),
-          setupLine('Counting', channelValue(config.counting_channel)),
-          setupLine('Welcome', channelValue(config.welcome_channel)),
-          setupLine('Level announce', channelValue(config.level_announce_channel)),
-          setupLine('Member count', channelValue(config.member_count_voice))
-        ].join('\n')
+        value: setupConfiguredSection(SETUP_CHANNELS, config, channelValue)
       },
       {
         name: 'Access',
-        value: [
-          setupLine('Admin users', countValue(config.admin_users)),
-          setupLine('Admin roles', countValue(config.admin_roles)),
-          setupLine('Review roles', countValue(config.authorized_roles))
-        ].join('\n'),
+        value: setupConfiguredSection(SETUP_LISTS, config, countValue, 'Empty'),
         inline: true
       },
       {
@@ -861,6 +1031,23 @@ function setupOverviewEmbed(db, guildId) {
     ],
     style: 'royal'
   });
+}
+
+function setupConfiguredSection(items, config, formatter, missingLabel = 'Missing') {
+  const configured = [];
+  const missing = [];
+  for (const item of items) {
+    const value = config[item.key];
+    if (hasSetupValue(value)) configured.push(setupLine(item.label, formatter(value)));
+    else missing.push(item.label);
+  }
+  if (missing.length) configured.push(`**${missingLabel}:** ${missing.join(', ')}`);
+  return configured.join('\n') || '`Nothing configured yet`';
+}
+
+function hasSetupValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined && value !== '';
 }
 
 function setupLine(label, value) {
@@ -1547,6 +1734,21 @@ async function handleSlash(interaction, db, client) {
         break;
       }
 
+      case 'channel-create':
+      case 'channel-rename':
+      case 'channel-delete':
+      case 'channel-update':
+      case 'category-create':
+      case 'category-rename':
+      case 'category-delete':
+      case 'role-create':
+      case 'role-rename':
+      case 'role-delete':
+      case 'server-rename': {
+        await handleServerAdminSlash(interaction, db);
+        break;
+      }
+
       case 'embed-create': {
         assertAiFeaturesAvailable(db);
         await interaction.deferReply();
@@ -1592,7 +1794,9 @@ async function handleSlash(interaction, db, client) {
       case 'mass-sync-categories':
       case 'bump':
       case 'pet':
-      case 'qna': {
+      case 'qna':
+      case 'invite-role':
+      case 'invites': {
         await handleCommunitySlash(interaction, db);
         break;
       }
@@ -2200,6 +2404,342 @@ function colorFromInput(input) {
   return null;
 }
 
+function cleanServerAdminName(value, label, min = 1) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (text.length < min) throw new Error(`${label} is required.`);
+  if (text.length > 100) throw new Error(`${label} must be 100 characters or less.`);
+  return text;
+}
+
+function cleanServerAdminText(value, max = 1024) {
+  const text = String(value || '').trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+function requireBotGuildPermission(guild, permission, label) {
+  if (!guild.members.me?.permissions?.has(permission)) {
+    throw new Error(`I need ${label} permission for this action.`);
+  }
+}
+
+function channelTypeFromInput(value) {
+  const key = String(value || 'text').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(CHANNEL_ADMIN_TYPES, key)) {
+    throw new Error('Channel type must be text, voice, announcement, forum, or stage.');
+  }
+  return CHANNEL_ADMIN_TYPES[key];
+}
+
+function resolveDashboardChannel(guild, value) {
+  const id = idFromMention(value);
+  const channel = id ? guild.channels.cache.get(id) : null;
+  if (!channel || !CHANNEL_ADMIN_CHANNEL_TYPES.includes(channel.type)) throw new Error('Channel not found.');
+  return channel;
+}
+
+function resolveDashboardCategory(guild, value) {
+  const id = idFromMention(value);
+  const category = id ? guild.channels.cache.get(id) : null;
+  if (!category || category.type !== ChannelType.GuildCategory) throw new Error('Category not found.');
+  return category;
+}
+
+function resolveEditableRole(guild, value) {
+  const id = idFromMention(value);
+  const role = id ? guild.roles.cache.get(id) : null;
+  if (!role || role.id === guild.id) throw new Error('Role not found.');
+  if (role.managed) throw new Error('Managed roles can not be edited.');
+  if (role.editable === false) throw new Error('Move the bot role above that role before editing it.');
+  return role;
+}
+
+function boolFromOption(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on', 'enable', 'enabled', 'confirm'].includes(String(value).toLowerCase());
+}
+
+function lockStateFromValue(value) {
+  const state = String(value || 'keep').toLowerCase();
+  if (['lock', 'locked'].includes(state)) return 'lock';
+  if (['unlock', 'unlocked'].includes(state)) return 'unlock';
+  return 'keep';
+}
+
+async function applyChannelCreate(guild, data) {
+  requireBotGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+  const type = channelTypeFromInput(data.type);
+  const options = {
+    name: cleanServerAdminName(data.name, 'Channel name'),
+    type,
+    reason: data.reason || 'Server admin command'
+  };
+  if (data.categoryId) options.parent = resolveDashboardCategory(guild, data.categoryId).id;
+  const topic = cleanServerAdminText(data.topic);
+  if (topic && [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum].includes(type)) options.topic = topic;
+  const slowmode = Math.max(0, Math.min(21600, Number.parseInt(data.slowmode, 10) || 0));
+  if ([ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(type)) options.rateLimitPerUser = slowmode;
+  return guild.channels.create(options);
+}
+
+async function applyChannelUpdate(guild, channel, data) {
+  requireBotGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+  const changes = [];
+  if (data.name) {
+    await channel.setName(cleanServerAdminName(data.name, 'Channel name'), 'Server admin command');
+    changes.push('name');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'categoryId')) {
+    const categoryId = data.categoryId ? resolveDashboardCategory(guild, data.categoryId).id : null;
+    await channel.setParent(categoryId, { lockPermissions: false, reason: 'Server admin command' });
+    changes.push('category');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'topic') && typeof channel.setTopic === 'function') {
+    await channel.setTopic(cleanServerAdminText(data.topic), 'Server admin command');
+    changes.push('topic');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'slowmode') && typeof channel.setRateLimitPerUser === 'function') {
+    const seconds = Math.max(0, Math.min(21600, Number.parseInt(data.slowmode, 10) || 0));
+    await channel.setRateLimitPerUser(seconds, 'Server admin command');
+    changes.push('slowmode');
+  }
+  const lockState = lockStateFromValue(data.lockState);
+  if (lockState !== 'keep') {
+    await channel.permissionOverwrites.edit(guild.id, { SendMessages: lockState === 'lock' ? false : null }, { reason: 'Server admin command' });
+    changes.push(lockState);
+  }
+  return changes;
+}
+
+async function handleServerAdminSlash(interaction, db) {
+  requireModerator(db, interaction.member);
+  const name = interaction.commandName;
+
+  if (name === 'channel-create') {
+    const channel = await applyChannelCreate(interaction.guild, {
+      type: interaction.options.getString('type'),
+      name: interaction.options.getString('name'),
+      categoryId: interaction.options.getChannel('category')?.id || null,
+      topic: interaction.options.getString('topic') || '',
+      slowmode: interaction.options.getInteger('slowmode') || 0
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-rename') {
+    const channel = interaction.options.getChannel('channel');
+    await applyChannelUpdate(interaction.guild, channel, { name: interaction.options.getString('name') });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed channel to ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-delete') {
+    const channel = interaction.options.getChannel('channel');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this channel.');
+    const nameBefore = channel.name;
+    await channel.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted #${nameBefore}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-update') {
+    const channel = interaction.options.getChannel('channel');
+    const data = {
+      lockState: interaction.options.getString('send_messages') || 'keep'
+    };
+    const category = interaction.options.getChannel('category');
+    if (category) data.categoryId = category.id;
+    if (interaction.options.getString('topic') !== null) data.topic = interaction.options.getString('topic') || '';
+    if (interaction.options.getInteger('slowmode') !== null) data.slowmode = interaction.options.getInteger('slowmode');
+    const changes = await applyChannelUpdate(interaction.guild, channel, data);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, changes.length ? `Updated ${channel}: ${changes.join(', ')}.` : `No changes applied to ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-create') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = await interaction.guild.channels.create({
+      name: cleanServerAdminName(interaction.options.getString('name'), 'Category name'),
+      type: ChannelType.GuildCategory,
+      reason: 'Server admin command'
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created category **${category.name}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = interaction.options.getChannel('category');
+    await category.setName(cleanServerAdminName(interaction.options.getString('name'), 'Category name'), 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed category to **${category.name}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-delete') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = interaction.options.getChannel('category');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this category.');
+    const nameBefore = category.name;
+    await category.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted category **${nameBefore}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-create') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = await interaction.guild.roles.create({
+      name: cleanServerAdminName(interaction.options.getString('name'), 'Role name'),
+      color: colorFromInput(interaction.options.getString('color')) || undefined,
+      hoist: Boolean(interaction.options.getBoolean('display')),
+      mentionable: Boolean(interaction.options.getBoolean('mentionable')),
+      reason: 'Server admin command'
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created role ${role}.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(interaction.guild, interaction.options.getRole('role')?.id);
+    await role.setName(cleanServerAdminName(interaction.options.getString('name'), 'Role name'), 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed role to ${role}.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-delete') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(interaction.guild, interaction.options.getRole('role')?.id);
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this role.');
+    const nameBefore = role.name;
+    await role.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted role @${nameBefore}.`)] }, true);
+    return;
+  }
+
+  if (name === 'server-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageGuild, 'Manage Server');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to rename this server.');
+    const nextName = cleanServerAdminName(interaction.options.getString('name'), 'Server name', 2);
+    await interaction.guild.setName(nextName, 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed server to **${nextName}**.`)] }, true);
+  }
+}
+
+async function handleServerAdminPrefix(message, db, command, args) {
+  requireModerator(db, message.member);
+  const { options, rest } = parseKeyValueOptions(args);
+
+  if (command === 'channel-create') {
+    const channel = await applyChannelCreate(message.guild, {
+      type: rest.shift() || optionValue(options, ['type']),
+      name: optionValue(options, ['name']) || rest.join(' '),
+      categoryId: optionValue(options, ['category', 'parent']),
+      topic: optionValue(options, ['topic']),
+      slowmode: optionValue(options, ['slowmode', 'rateLimit'])
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'channel-rename') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    await applyChannelUpdate(message.guild, channel, { name: optionValue(options, ['name']) || rest.join(' ') });
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed channel to ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'channel-delete') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this channel.');
+    const nameBefore = channel.name;
+    await channel.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted #${nameBefore}.`)] });
+    return;
+  }
+
+  if (command === 'channel-update') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    const data = {
+      categoryId: optionValue(options, ['category', 'parent']),
+      topic: optionValue(options, ['topic']),
+      slowmode: optionValue(options, ['slowmode', 'rateLimit']),
+      lockState: optionValue(options, ['lock', 'sendMessages', 'send'])
+    };
+    for (const key of Object.keys(data)) if (data[key] === null) delete data[key];
+    const changes = await applyChannelUpdate(message.guild, channel, data);
+    await message.reply({ embeds: [success(db, message.guild.id, changes.length ? `Updated ${channel}: ${changes.join(', ')}.` : `No changes applied to ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'category-create') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = await message.guild.channels.create({
+      name: cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Category name'),
+      type: ChannelType.GuildCategory,
+      reason: 'Server admin command'
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created category **${category.name}**.`)] });
+    return;
+  }
+
+  if (command === 'category-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = resolveDashboardCategory(message.guild, rest.shift());
+    await category.setName(cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Category name'), 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed category to **${category.name}**.`)] });
+    return;
+  }
+
+  if (command === 'category-delete') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = resolveDashboardCategory(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this category.');
+    const nameBefore = category.name;
+    await category.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted category **${nameBefore}**.`)] });
+    return;
+  }
+
+  if (command === 'role-create') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = await message.guild.roles.create({
+      name: cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Role name'),
+      color: colorFromInput(optionValue(options, ['color'])) || undefined,
+      hoist: boolFromOption(optionValue(options, ['display', 'hoist'])),
+      mentionable: boolFromOption(optionValue(options, ['mentionable'])),
+      reason: 'Server admin command'
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created role ${role}.`)] });
+    return;
+  }
+
+  if (command === 'role-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(message.guild, rest.shift());
+    await role.setName(cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Role name'), 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed role to ${role}.`)] });
+    return;
+  }
+
+  if (command === 'role-delete') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this role.');
+    const nameBefore = role.name;
+    await role.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted role @${nameBefore}.`)] });
+    return;
+  }
+
+  if (command === 'server-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageGuild, 'Manage Server');
+    if (!boolFromOption(optionValue(options, ['confirm']))) throw new Error('Add `confirm=true` to rename this server.');
+    const nextName = cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Server name', 2);
+    await message.guild.setName(nextName, 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed server to **${nextName}**.`)] });
+  }
+}
+
 function embedOptionsFromAI(generated) {
   return {
     title: generated.title || 'AI Embed',
@@ -2219,8 +2759,247 @@ function channelIdsFromText(text) {
     .filter(Boolean);
 }
 
+function validateInviteRole(guild, role) {
+  if (!role || role.id === guild.id) throw new Error('Choose a real role for this invite.');
+  if (role.managed) throw new Error('Managed roles can not be assigned by invite.');
+  if (role.editable === false) {
+    throw new Error('Move the bot role above that role before using it for invite roles.');
+  }
+}
+
+function inviteRoleStatusEmbed(db, guild, title = 'Invite Roles') {
+  const mappings = inviteRoles.listInviteRoleMappings(db, guild.id);
+  return buildEmbed(db, guild.id, {
+    title,
+    description: inviteRoles.formatInviteRoleMappings(guild, mappings),
+    fields: [
+      {
+        name: 'Requirement',
+        value: 'The bot needs **Manage Server** permission so it can read invite usage.'
+      }
+    ],
+    style: 'emerald'
+  });
+}
+
+async function inviteUsageForUser(guild, userId) {
+  const me = guild.members.me;
+  if (me?.permissions && !me.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+    return { available: false, total: 0, codes: [] };
+  }
+  const invites = await guild.invites.fetch().catch(() => null);
+  if (!invites) return { available: false, total: 0, codes: [] };
+
+  const codes = [...invites.values()]
+    .filter((invite) => invite.inviter?.id === userId)
+    .map((invite) => ({
+      code: invite.code,
+      uses: Number(invite.uses || 0)
+    }))
+    .sort((a, b) => b.uses - a.uses || a.code.localeCompare(b.code));
+
+  return {
+    available: true,
+    total: codes.reduce((sum, item) => sum + item.uses, 0),
+    codes
+  };
+}
+
+async function inviteStatsEmbed(db, guild, targetUser) {
+  const tracked = db.inviteStats(guild.id, targetUser.id, 10);
+  const current = await inviteUsageForUser(guild, targetUser.id);
+  const activeTracked = tracked.recent.filter((row) => guild.members.cache.has(row.member_id)).length;
+  const codeLines = tracked.codes.length
+    ? tracked.codes.slice(0, 8).map((row) => `\`${row.invite_code || 'unknown'}\`: ${row.count}`).join('\n')
+    : 'No tracked invite joins yet.';
+  const currentLines = current.available
+    ? (current.codes.length
+        ? current.codes.slice(0, 8).map((row) => `\`${row.code}\`: ${row.uses}`).join('\n')
+        : 'No active invite links owned by this member.')
+    : 'Unavailable. The bot needs Manage Server permission to read invite uses.';
+  const recentLines = tracked.recent.length
+    ? tracked.recent.slice(0, 6).map((row) => `<@${row.member_id}> via \`${row.invite_code || 'unknown'}\` <t:${Math.floor(row.joined_at / 1000)}:R>`).join('\n')
+    : 'No tracked joins yet.';
+
+  return buildEmbed(db, guild.id, {
+    title: `Invites - ${targetUser.tag || targetUser.username || targetUser.id}`,
+    description: [
+      `Tracked joins: **${tracked.total}**`,
+      `Recent tracked members still cached: **${activeTracked}/${tracked.recent.length}**`,
+      current.available ? `Current active invite uses: **${current.total}**` : 'Current active invite uses: **Unavailable**'
+    ].join('\n'),
+    fields: [
+      { name: 'Tracked by code', value: codeLines },
+      { name: 'Current active links', value: currentLines },
+      { name: 'Recent tracked joins', value: recentLines }
+    ],
+    style: 'ocean'
+  });
+}
+
+async function handleInvitesSlash(interaction, db) {
+  const action = interaction.options.getString('action') || 'check';
+  const resetAll = Boolean(interaction.options.getBoolean('all'));
+  const targetUser = interaction.options.getUser('user') || interaction.user;
+
+  if (action === 'reset') {
+    requireModerator(db, interaction.member);
+    const deleted = resetAll
+      ? db.resetInviteStats(interaction.guild.id)
+      : db.resetInviteStats(interaction.guild.id, targetUser.id);
+    await reply(interaction, {
+      embeds: [
+        success(
+          db,
+          interaction.guild.id,
+          resetAll
+            ? `Reset all tracked invite stats. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`
+            : `Reset tracked invite stats for ${targetUser}. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`
+        )
+      ]
+    }, true);
+    return;
+  }
+
+  if (targetUser.id !== interaction.user.id) requireModerator(db, interaction.member);
+  await reply(interaction, {
+    embeds: [await inviteStatsEmbed(db, interaction.guild, targetUser)]
+  }, true);
+}
+
+async function handleInvitesPrefix(message, db, client, args) {
+  const action = String(args[0] || 'check').toLowerCase();
+  if (['reset', 'clear'].includes(action)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const targetRaw = args[0];
+    if (String(targetRaw || '').toLowerCase() === 'all') {
+      const deleted = db.resetInviteStats(message.guild.id);
+      await message.reply({
+        embeds: [success(db, message.guild.id, `Reset all tracked invite stats. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`)]
+      });
+      return;
+    }
+    const targetUser = targetRaw
+      ? await resolveUser(client, message.guild, targetRaw)
+      : message.author;
+    if (!targetUser) throw new Error('User not found.');
+    const deleted = db.resetInviteStats(message.guild.id, targetUser.id);
+    await message.reply({
+      embeds: [success(db, message.guild.id, `Reset tracked invite stats for ${targetUser}. Removed ${deleted} tracked join${deleted === 1 ? '' : 's'}.`)]
+    });
+    return;
+  }
+
+  const targetRaw = action === 'check' ? args[1] : args[0];
+  const targetUser = targetRaw
+    ? await resolveUser(client, message.guild, targetRaw)
+    : message.author;
+  if (!targetUser) throw new Error('User not found.');
+  if (targetUser.id !== message.author.id) requireModerator(db, message.member);
+  await message.reply({
+    embeds: [await inviteStatsEmbed(db, message.guild, targetUser)]
+  });
+}
+
+async function handleInviteRoleSlash(interaction, db) {
+  requireModerator(db, interaction.member);
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === 'add') {
+    const invite = interaction.options.getString('invite');
+    const role = interaction.options.getRole('role');
+    validateInviteRole(interaction.guild, role);
+    const result = inviteRoles.setInviteRoleMapping(db, interaction.guild.id, invite, role.id);
+    await reply(interaction, {
+      embeds: [
+        success(
+          db,
+          interaction.guild.id,
+          `${result.replaced ? 'Updated' : 'Added'} invite \`${result.mapping.code}\` -> ${role}.`
+        )
+      ]
+    }, true);
+    return;
+  }
+
+  if (sub === 'remove') {
+    const invite = interaction.options.getString('invite');
+    const result = inviteRoles.removeInviteRoleMapping(db, interaction.guild.id, invite);
+    await reply(interaction, {
+      embeds: [
+        result.removed
+          ? success(db, interaction.guild.id, `Removed invite role mapping for \`${result.code}\`.`)
+          : buildEmbed(db, interaction.guild.id, {
+              title: 'Invite Role',
+              description: `No mapping was found for \`${result.code}\`.`,
+              style: 'amber'
+            })
+      ]
+    }, true);
+    return;
+  }
+
+  await reply(interaction, { embeds: [inviteRoleStatusEmbed(db, interaction.guild)] }, true);
+}
+
+async function handleInviteRolePrefix(message, db, args) {
+  requireModerator(db, message.member);
+  const sub = String(args.shift() || 'list').toLowerCase();
+
+  if (sub === 'add' || sub === 'set') {
+    const invite = args.shift();
+    const roleId = idFromMention(args.shift());
+    const role = roleId ? await message.guild.roles.fetch(roleId).catch(() => null) : null;
+    validateInviteRole(message.guild, role);
+    const result = inviteRoles.setInviteRoleMapping(db, message.guild.id, invite, role.id);
+    await message.reply({
+      embeds: [
+        success(
+          db,
+          message.guild.id,
+          `${result.replaced ? 'Updated' : 'Added'} invite \`${result.mapping.code}\` -> ${role}.`
+        )
+      ]
+    });
+    return;
+  }
+
+  if (sub === 'remove' || sub === 'delete') {
+    const result = inviteRoles.removeInviteRoleMapping(db, message.guild.id, args.shift());
+    await message.reply({
+      embeds: [
+        result.removed
+          ? success(db, message.guild.id, `Removed invite role mapping for \`${result.code}\`.`)
+          : buildEmbed(db, message.guild.id, {
+              title: 'Invite Role',
+              description: `No mapping was found for \`${result.code}\`.`,
+              style: 'amber'
+            })
+      ]
+    });
+    return;
+  }
+
+  if (sub !== 'list' && sub !== 'status') {
+    throw new Error('Usage: r!invite-role add discord.gg/code @role, r!invite-role remove code, or r!invite-role list');
+  }
+
+  await message.reply({ embeds: [inviteRoleStatusEmbed(db, message.guild)] });
+}
+
 async function handleCommunitySlash(interaction, db) {
   const name = interaction.commandName;
+
+  if (name === 'invites') {
+    await handleInvitesSlash(interaction, db);
+    return;
+  }
+
+  if (name === 'invite-role') {
+    await handleInviteRoleSlash(interaction, db);
+    return;
+  }
 
   if (name === 'verification') {
     requireModerator(db, interaction.member);
@@ -2360,16 +3139,17 @@ const HELP_SECTIONS = [
     lines: [
       '`restrict`, `unrestrict`, `ban`, `kick`, `mute`, `unmute`, `warn`, `unwarn`, `warnings`',
       '`purge`, `slowmode`, `softban`, `mass-ban`, `ban-list`, `case`, `note`',
-      '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`'
+      '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`',
+      '`channel-create`, `channel-rename`, `channel-delete`, `channel-update`, `category-create`, `category-rename`, `category-delete`'
     ]
   },
   {
     id: 'systems',
     label: 'Server Systems',
     lines: [
-      '`verification setup #channel @role [message]`, `qna setup #channel personality`',
-      '`sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`, `snipe`, `first-message`',
-      '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, and Q&A settings.'
+      '`verification setup #channel @role [message]`, `qna setup #channel personality`, `invite-role add invite @role`',
+      '`invites [member]`, `invites reset [member|all]`, `sticky set message`, `sticky clear`, `bump`, `poll`, `giveaway`, `remind`, `afk`',
+      '`setup` manages roles, channels, access, styles, messages, tickets, verification, bump, invite roles, and Q&A settings.'
     ]
   },
   {
@@ -2377,6 +3157,7 @@ const HELP_SECTIONS = [
     label: 'Roles & Levels',
     lines: [
       '`give-role`, `remove-role`, `temp-role`, `temp-role-remove`, `temp-role-list`',
+      '`role-create`, `role-rename`, `role-delete`, `server-rename`',
       '`booster-role`, `role-level`, `daily`, `balance`, `profile`, `level`, `leaderboard`'
     ]
   },
@@ -3324,6 +4105,21 @@ async function handlePrefixCommand(message, db, client, command, args) {
         })
       ]
     });
+    return;
+  }
+
+  if (command === 'invite-role') {
+    await handleInviteRolePrefix(message, db, args);
+    return;
+  }
+
+  if (command === 'invites') {
+    await handleInvitesPrefix(message, db, client, args);
+    return;
+  }
+
+  if (SERVER_ADMIN_COMMANDS.has(command)) {
+    await handleServerAdminPrefix(message, db, command, args);
     return;
   }
 
