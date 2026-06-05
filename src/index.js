@@ -25,6 +25,9 @@ const { startDashboard } = require('./dashboard/server');
 const db = new BotDatabase(env.databasePath);
 const clients = [];
 let dashboardServer = null;
+const aiReplyMemory = new Map();
+const messageResponseLocks = new Map();
+const MESSAGE_RESPONSE_LOCK_TTL_MS = 2 * 60 * 1000;
 
 function createDiscordClient() {
   return new Client({
@@ -146,7 +149,9 @@ function attachClientEvents(client, botIndex) {
     if ((runtimeFlags.maintenance || runtimeFlags.panicMode) && !ownerBypass) return;
 
     try {
-      await handleAfk(message);
+      if (reserveMessageResponse(message, 'afk')) {
+        await handleAfk(message);
+      }
 
       const aiModerationEnabled = env.aiModeration &&
         configBool(message.guild.id, 'ai_moderation_enabled', true);
@@ -169,17 +174,27 @@ function attachClientEvents(client, botIndex) {
         return;
       }
 
-      if (await handleRestrictChannelMessage(message, client)) return;
-      if (await handleCountingMessage(message)) return;
+      if (reserveMessageResponse(message, 'restrict-channel') && await handleRestrictChannelMessage(message, client)) return;
+      if (reserveMessageResponse(message, 'counting') && await handleCountingMessage(message)) return;
 
-      const handledPrefix = await commands.handlePrefixMessage(message, db, client);
-      if (handledPrefix) return;
+      if (isPrefixCommandMessage(message)) {
+        if (!reserveMessageResponse(message, 'prefix-command')) return;
+        if (await commands.handlePrefixMessage(message, db, client)) return;
+      }
 
-      await progression.awardMessageActivity(db, message).catch(() => null);
-      await handleSticky(message);
-      if (await handleQnaMessage(message, client)) return;
+      if (reserveMessageResponse(message, 'activity')) {
+        await progression.awardMessageActivity(db, message).catch(() => null);
+      }
+      if (reserveMessageResponse(message, 'sticky')) {
+        await handleSticky(message);
+      }
+      if (isQnaCandidate(message)) {
+        if (!reserveMessageResponse(message, 'qna')) return;
+        if (await handleQnaMessage(message)) return;
+      }
 
       if (message.mentions.has(client.user)) {
+        if (!reserveMessageResponse(message, 'ai-mention')) return;
         await handleAiMention(message, client);
       }
     } catch (err) {
@@ -346,6 +361,58 @@ function interactionDebugInfo(interaction) {
   };
 }
 
+function isPrefixCommandMessage(message) {
+  const content = message.content.trim();
+  if (!content) return false;
+  if (matchesCommandPrefix(content, env.ownerPrefix)) return true;
+  if (env.swatPrefix && matchesCommandPrefix(content, env.swatPrefix)) return true;
+  return env.enablePrefixCommands && matchesCommandPrefix(content, env.defaultPrefix);
+}
+
+function isQnaCandidate(message) {
+  const channelId = db.getConfig(message.guild.id, 'qna_channel');
+  return Boolean(
+    channelId &&
+    message.channel.id === channelId &&
+    !mentionsAnyClientUser(message) &&
+    message.content.trim()
+  );
+}
+
+function mentionsAnyClientUser(message) {
+  return clients.some((botClient) => botClient.user && message.mentions.has(botClient.user));
+}
+
+function matchesCommandPrefix(content, prefix) {
+  if (!prefix || !content.startsWith(prefix)) return false;
+  const next = content[prefix.length];
+  const last = prefix[prefix.length - 1];
+  if (!next) return true;
+  if (/\s/.test(next)) return true;
+  return /[^a-z0-9]/i.test(last);
+}
+
+function reserveMessageResponse(message, scope) {
+  const now = Date.now();
+  pruneMessageResponseLocks(now);
+  const key = messageResponseLockKey(message, scope);
+  const expiresAt = messageResponseLocks.get(key);
+  if (expiresAt && expiresAt > now) return false;
+  messageResponseLocks.set(key, now + MESSAGE_RESPONSE_LOCK_TTL_MS);
+  return true;
+}
+
+function messageResponseLockKey(message, scope) {
+  return `${scope}:${message.guild?.id || 'dm'}:${message.channel?.id || 'unknown'}:${message.id}`;
+}
+
+function pruneMessageResponseLocks(now = Date.now()) {
+  if (messageResponseLocks.size < 1000) return;
+  for (const [key, expiresAt] of messageResponseLocks) {
+    if (expiresAt <= now) messageResponseLocks.delete(key);
+  }
+}
+
 async function handleRestrictChannelMessage(message, client) {
   const restrictChannel = db.getConfig(message.guild.id, 'restrict_channel');
   if (!restrictChannel || message.channel.id !== restrictChannel) return false;
@@ -492,16 +559,25 @@ async function handleAiMention(message, client) {
   const prompt = ai.stripBotMention(message.content, client.user.id);
   if (!prompt) return;
   await message.channel.sendTyping().catch(() => null);
+  const memory = await aiMemoryForMessage(message);
   const answer = await ai.askAI(prompt, {
+    memory,
     promptStack: prompts.buildPromptStack(db, {
       guild: message.guild,
       channel: message.channel
-    })
+    }),
+    systemSuffix: [
+      'Answer as a helpful Discord bot with broad general knowledge.',
+      'Use the provided one-message memory or referenced Discord message to understand follow-ups.',
+      'Be accurate, practical, and clear. If live/current facts are needed, say that you cannot verify them from Discord alone.',
+      'Do not mention everyone, here, users, or roles.'
+    ].join(' ')
   });
   await message.reply({
     content: answer.slice(0, 2000),
     allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
   }).catch(() => null);
+  rememberAiReply(message, prompt, answer);
   await systemLog(db, message.guild, 'ai', {
     title: 'AI Reply',
     actor: message.author,
@@ -513,28 +589,36 @@ async function handleAiMention(message, client) {
   }).catch(() => null);
 }
 
-async function handleQnaMessage(message, client) {
+async function handleQnaMessage(message) {
   const channelId = db.getConfig(message.guild.id, 'qna_channel');
   if (!channelId || message.channel.id !== channelId) return false;
-  if (message.mentions.has(client.user)) return false;
+  if (mentionsAnyClientUser(message)) return false;
   if (!message.content.trim()) return false;
 
   const runtimeFlags = db.runtimeFlags();
   if (runtimeFlags.aiLocked || runtimeFlags.botLocked || runtimeFlags.panicMode || runtimeFlags.maintenance) return false;
 
   await message.channel.sendTyping().catch(() => null);
+  const memory = await aiMemoryForMessage(message);
   const answer = await ai.askAI(message.content.slice(0, 1800), {
+    memory,
     personality: db.getConfig(message.guild.id, 'qna_personality', env.aiPersonality),
     promptStack: prompts.buildPromptStack(db, {
       guild: message.guild,
       channel: message.channel
     }),
-    systemSuffix: 'Answer as the configured Q&A helper for this server. Be accurate and concise. Do not mention everyone, here, users, or roles.'
+    systemSuffix: [
+      'Answer as the configured Q&A helper for this server with broad general knowledge.',
+      'Use the provided one-message memory or referenced Discord message to understand follow-ups.',
+      'Be accurate and concise. If live/current facts are needed, say that you cannot verify them from Discord alone.',
+      'Do not mention everyone, here, users, or roles.'
+    ].join(' ')
   });
   await message.reply({
     content: answer.slice(0, 2000),
     allowedMentions: { parse: [], users: [], roles: [], repliedUser: false }
   }).catch(() => null);
+  rememberAiReply(message, message.content.slice(0, 1800), answer);
   await systemLog(db, message.guild, 'ai', {
     title: 'Q&A Reply',
     actor: message.author,
@@ -553,6 +637,45 @@ async function referencedMember(message) {
   const userId = referencedMessage?.author?.id;
   if (!userId || referencedMessage.author.bot) return null;
   return message.guild.members.fetch(userId).catch(() => null);
+}
+
+async function aiMemoryForMessage(message) {
+  const remembered = aiReplyMemory.get(aiMemoryKey(message));
+  const referencedMessage = await referencedDiscordMessage(message);
+  const referenced = referencedMessage
+    ? `${referencedMessage.author?.tag || referencedMessage.author?.username || 'User'}: ${referencedMessage.content || '[no text content]'}`
+    : null;
+  if (!remembered && !referenced) return null;
+  return {
+    ...remembered,
+    referenced
+  };
+}
+
+async function referencedDiscordMessage(message) {
+  if (!message.reference?.messageId) return null;
+  return message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+}
+
+function rememberAiReply(message, prompt, answer) {
+  aiReplyMemory.set(aiMemoryKey(message), {
+    user: String(prompt || '').slice(0, 1200),
+    assistant: String(answer || '').slice(0, 1200)
+  });
+  pruneAiReplyMemory();
+}
+
+function aiMemoryKey(message) {
+  return `${message.guild.id}:${message.channel.id}:${message.author.id}`;
+}
+
+function pruneAiReplyMemory() {
+  const maxEntries = 500;
+  while (aiReplyMemory.size > maxEntries) {
+    const oldest = aiReplyMemory.keys().next().value;
+    if (!oldest) break;
+    aiReplyMemory.delete(oldest);
+  }
 }
 
 function configBool(guildId, key, fallback = true) {

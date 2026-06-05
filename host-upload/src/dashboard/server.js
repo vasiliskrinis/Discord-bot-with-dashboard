@@ -16,8 +16,10 @@ const {
 const env = require('../env');
 const { DEFAULT_GUILD_CONFIG } = require('../db');
 const { EMBED_STYLES, buildEmbed } = require('../embeds');
+const { slashCommands } = require('../commands');
 const community = require('../services/community');
 const dashboardControlResponses = require('../services/dashboardControls');
+const ticketService = require('../services/tickets');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -303,6 +305,14 @@ async function handleRequest(context) {
       return;
     }
 
+    const guildTicketPanelMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/tickets\/panel$/);
+    if (guildTicketPanelMatch && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const guildId = decodeURIComponent(guildTicketPanelMatch[1]);
+      sendJson(res, 200, await upsertTicketPanelFromDashboard(clients, db, guildId, body));
+      return;
+    }
+
     const guildMatch = pathname.match(/^\/api\/guilds\/([^/]+)$/);
     if (guildMatch && req.method === 'GET') {
       sendJson(res, 200, guildDetailPayload(clients, db, decodeURIComponent(guildMatch[1])));
@@ -365,6 +375,7 @@ function overviewPayload(client, db) {
       tables,
       totalRows: Object.values(tables).reduce((sum, count) => sum + count, 0)
     },
+    commandCatalog: safePayloadSection(errors, 'command catalog', [], () => commandCatalogPayload()),
     owner: safePayloadSection(errors, 'owner controls', {}, () => ownerPayload(db, guilds, tables)),
     commandUsage: safePayloadSection(errors, 'command usage', [], () => db.listCommandUsage(12)),
     botBans: safePayloadSection(errors, 'watchlist', [], () => db.listBotBans(null, 10)),
@@ -424,8 +435,22 @@ function guildDetailPayload(client, db, guildId) {
       panelId: row.panel_id,
       name: row.name,
       description: row.description,
+      categoryId: row.category_id,
       category: row.category_id ? channelLabel(guild, row.category_id) : 'No category',
+      supportRoleId: row.support_role_id,
       supportRole: row.support_role_id ? roleLabel(guild, row.support_role_id) : 'No role',
+      mode: row.mode || 'thread',
+      panelContent: row.panel_content,
+      buttonLabel: row.button_label,
+      buttonStyle: row.button_style || 'primary',
+      buttonEmoji: row.button_emoji,
+      openMessage: row.open_message,
+      closeButtonLabel: row.close_button_label,
+      deleteButtonLabel: row.delete_button_label,
+      panelChannelId: row.panel_channel_id,
+      panelChannel: row.panel_channel_id ? channelLabel(guild, row.panel_channel_id) : 'Not posted',
+      panelMessageId: row.panel_message_id,
+      createdBy: row.created_by,
       createdAt: row.created_at
     })),
     tickets: safePayloadSection(errors, 'tickets', [], () => db.listTickets(guild.id, null, 20)).map((row) => ({
@@ -552,6 +577,34 @@ function ownerPayload(db, guilds, tables) {
   };
 }
 
+function commandCatalogPayload() {
+  const commands = slashCommands().map((command) => ({
+    name: command.name,
+    source: 'slash',
+    usage: `/${command.name}`,
+    description: command.description,
+    subcommands: commandOptions(command)
+      .filter((option) => option.type === 1)
+      .map((option) => option.name),
+    options: commandOptions(command)
+      .filter((option) => option.type !== 1)
+      .map((option) => option.name)
+  }));
+  commands.push({
+    name: 'ticket-panel',
+    source: 'owner',
+    usage: 'oc ticket-panel',
+    description: 'Create, update, list, and switch ticket panels between thread and channel mode.',
+    subcommands: ['create', 'list', 'update', 'mode'],
+    options: ['channel', 'mode', 'title', 'description', 'category', 'role']
+  });
+  return commands;
+}
+
+function commandOptions(command) {
+  return Array.isArray(command.options) ? command.options : [];
+}
+
 function configInputType(key) {
   if (CHANNEL_CONFIG_KEYS.has(key)) return 'channel';
   if (CHANNEL_LIST_CONFIG_KEYS.has(key)) return 'channel-list';
@@ -561,6 +614,7 @@ function configInputType(key) {
   if (BOOLEAN_CONFIG_KEYS.has(key)) return 'boolean';
   if (NUMBER_CONFIG_KEYS.has(key)) return 'number';
   if (key === 'embed_style') return 'style';
+  if (key === 'anti_raid_action') return 'action';
   if (key === 'sticky' || key === 'role_level_rewards') return 'json';
   if (key === 'welcome_message') return 'message';
   return 'text';
@@ -571,6 +625,7 @@ function configPickerType(key) {
   if (ROLE_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key)) return 'roles';
   if (USER_LIST_CONFIG_KEYS.has(key)) return 'users';
   if (key === 'embed_style') return 'styles';
+  if (key === 'anti_raid_action') return 'antiRaidActions';
   return null;
 }
 
@@ -597,12 +652,19 @@ function guildPickerOptions(client, guild) {
         detail: member.user?.tag || member.id,
         avatarUrl: member.user?.displayAvatarURL?.({ size: 64 }) || null
       })),
+    categories: categoryOptions(guild),
     styles: Object.entries(EMBED_STYLES).map(([id, style]) => ({
       id,
       label: style.name,
       detail: id,
       color: `#${style.color.toString(16).padStart(6, '0')}`
-    }))
+    })),
+    antiRaidActions: [
+      { id: 'restrict', label: 'Restrict', detail: 'Apply restricted role' },
+      { id: 'kick', label: 'Kick', detail: 'Remove joining accounts' },
+      { id: 'timeout', label: 'Timeout', detail: 'Temporarily mute joins' },
+      { id: 'log', label: 'Log only', detail: 'Record without action' }
+    ]
   };
 }
 
@@ -615,6 +677,18 @@ function channelOptions(guild, predicate) {
       label: channel.name,
       detail: channelTypeLabel(channel.type),
       parentId: channel.parentId || null
+    }));
+}
+
+function categoryOptions(guild) {
+  return [...(guild.channels?.cache?.values?.() || [])]
+    .filter((channel) => channel.type === ChannelType.GuildCategory)
+    .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0) || a.name.localeCompare(b.name))
+    .map((channel) => ({
+      id: channel.id,
+      label: channel.name,
+      detail: 'Category',
+      parentId: null
     }));
 }
 
@@ -916,6 +990,109 @@ async function sendCustomEmbedFromDashboard(client, db, guildId, body) {
     channelId: channel.id,
     url: message.url
   };
+}
+
+async function upsertTicketPanelFromDashboard(client, db, guildId, body) {
+  const guild = getGuild(client, guildId);
+  if (!guild) throw httpError(404, 'Guild not found.');
+
+  const panelId = cleanTicketPanelId(body.panelId || body.id || body.name);
+  if (!panelId) throw httpError(400, 'Panel ID is required.');
+
+  const existing = ticketService.panelFromRow(db.getTicketPanel(guild.id, panelId));
+  const panelChannelId = cleanText(body.panelChannelId || body.channelId, 40);
+  const channelChanged = Boolean(existing && panelChannelId && panelChannelId !== existing.panelChannelId);
+  const panel = ticketService.normalizePanelData({
+    panelId,
+    name: body.name,
+    description: body.description,
+    categoryId: emptyToNull(body.categoryId),
+    supportRoleId: emptyToNull(body.supportRoleId),
+    mode: body.mode,
+    panelContent: body.panelContent,
+    buttonLabel: body.buttonLabel,
+    buttonStyle: body.buttonStyle,
+    buttonEmoji: body.buttonEmoji,
+    openMessage: body.openMessage,
+    closeButtonLabel: body.closeButtonLabel,
+    deleteButtonLabel: body.deleteButtonLabel,
+    panelChannelId: panelChannelId || existing?.panelChannelId || null,
+    panelMessageId: channelChanged ? null : (body.panelMessageId || existing?.panelMessageId || null),
+    createdBy: body.createdBy || env.botOwnerId || 'dashboard'
+  }, existing || {});
+
+  if (panel.categoryId && !guild.channels?.cache?.get?.(panel.categoryId)) {
+    throw httpError(400, 'Ticket category was not found.');
+  }
+  if (panel.supportRoleId && !guild.roles?.cache?.get?.(panel.supportRoleId)) {
+    throw httpError(400, 'Support role was not found.');
+  }
+
+  let action = existing ? 'updated' : 'created';
+  let url = null;
+  let edited = false;
+
+  if (existing && !channelChanged) {
+    const result = await ticketService.updateTicketPanel(db, guild, panel.panelId, panel)
+      .catch((err) => {
+        throw httpError(400, err.message || 'Ticket panel update failed.');
+      });
+    edited = Boolean(result.edited);
+  }
+
+  if (!existing || channelChanged || !edited) {
+    const channel = await dashboardTextChannel(guild, panel.panelChannelId);
+    if (!channel) {
+      if (existing) {
+        db.saveTicketPanel(guild.id, panel);
+      } else {
+        throw httpError(400, 'Choose a text channel to post the ticket panel.');
+      }
+    } else {
+      const saved = await ticketService.sendTicketPanel(db, {
+        guild,
+        channel,
+        user: { id: env.botOwnerId || 'dashboard' },
+        reply: null
+      }, panel);
+      action = existing ? 'reposted' : 'created';
+      url = channel.messages?.cache?.get?.(saved.panelMessageId)?.url || null;
+    }
+  }
+
+  return {
+    action,
+    edited,
+    panelId: panel.panelId,
+    url,
+    detail: guildDetailPayload(client, db, guild.id)
+  };
+}
+
+async function dashboardTextChannel(guild, channelId) {
+  const id = String(channelId || '').trim();
+  if (!id) return null;
+  const channel = await guild.channels.fetch(id).catch(() => null);
+  if (!channel?.isTextBased?.()) throw httpError(400, 'Ticket panel channel must be text-based.');
+  const permissions = channel.permissionsFor?.(guild.members?.me);
+  if (permissions && !permissions.has(PermissionsBitField.Flags.SendMessages)) {
+    throw httpError(400, 'The bot can not send messages in that ticket panel channel.');
+  }
+  return channel;
+}
+
+function cleanTicketPanelId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+}
+
+function emptyToNull(value) {
+  const text = String(value || '').trim();
+  return text || null;
 }
 
 async function sendOwnerBroadcast(client, db, body) {
@@ -1326,6 +1503,11 @@ function displayConfigValue(client, guild, key, value) {
   if (ROLE_CONFIG_KEYS.has(key)) return roleLabel(guild, value);
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => roleLabel(guild, id)).join(', ');
   if (USER_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => userLabel(client, guild, id)).join(', ');
+  if (BOOLEAN_CONFIG_KEYS.has(key)) return value ? 'Enabled' : 'Disabled';
+  if (key === 'anti_raid_action') {
+    const labels = { restrict: 'Restrict', kick: 'Kick', timeout: 'Timeout', log: 'Log only' };
+    return labels[String(value || '').toLowerCase()] || String(value);
+  }
   if (key === 'sticky') {
     return value?.channelId ? `${channelLabel(guild, value.channelId)} - ${value.message || 'Sticky message'}` : JSON.stringify(value);
   }

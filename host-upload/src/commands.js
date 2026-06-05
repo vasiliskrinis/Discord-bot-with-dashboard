@@ -822,35 +822,15 @@ function setupOverviewEmbed(db, guildId) {
     fields: [
       {
         name: 'Roles',
-        value: [
-          setupLine('Restrict perms', roleValue(config.restrict_perms_role)),
-          setupLine('Restricted role', roleValue(config.restricted_role)),
-          setupLine('Update ping', roleValue(config.update_ping_role)),
-          setupLine('Auto role', roleValue(config.auto_role))
-        ].join('\n')
+        value: setupConfiguredSection(SETUP_SINGLE_ROLES, config, roleValue)
       },
       {
         name: 'Channels',
-        value: [
-          setupLine('Restrict trap', channelValue(config.restrict_channel)),
-          setupLine('Advanced logs', channelValue(config.advanced_logs_channel)),
-          setupLine('Restrict logs', channelValue(config.restrict_logs_channel)),
-          setupLine('Restricted users', channelValue(config.restricted_users_channel)),
-          setupLine('Roblox updates', channelValue(config.roblox_updates_channel)),
-          setupLine('Executor updates', channelValue(config.executor_updates_channel)),
-          setupLine('Counting', channelValue(config.counting_channel)),
-          setupLine('Welcome', channelValue(config.welcome_channel)),
-          setupLine('Level announce', channelValue(config.level_announce_channel)),
-          setupLine('Member count', channelValue(config.member_count_voice))
-        ].join('\n')
+        value: setupConfiguredSection(SETUP_CHANNELS, config, channelValue)
       },
       {
         name: 'Access',
-        value: [
-          setupLine('Admin users', countValue(config.admin_users)),
-          setupLine('Admin roles', countValue(config.admin_roles)),
-          setupLine('Review roles', countValue(config.authorized_roles))
-        ].join('\n'),
+        value: setupConfiguredSection(SETUP_LISTS, config, countValue, 'Empty'),
         inline: true
       },
       {
@@ -861,6 +841,23 @@ function setupOverviewEmbed(db, guildId) {
     ],
     style: 'royal'
   });
+}
+
+function setupConfiguredSection(items, config, formatter, missingLabel = 'Missing') {
+  const configured = [];
+  const missing = [];
+  for (const item of items) {
+    const value = config[item.key];
+    if (hasSetupValue(value)) configured.push(setupLine(item.label, formatter(value)));
+    else missing.push(item.label);
+  }
+  if (missing.length) configured.push(`**${missingLabel}:** ${missing.join(', ')}`);
+  return configured.join('\n') || '`Nothing configured yet`';
+}
+
+function hasSetupValue(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  return value !== null && value !== undefined && value !== '';
 }
 
 function setupLine(label, value) {
