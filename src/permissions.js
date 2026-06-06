@@ -1,4 +1,3 @@
-const { PermissionsBitField } = require('discord.js');
 const env = require('./env');
 
 function isBotOwner(userId) {
@@ -19,20 +18,26 @@ function isConfiguredAdmin(db, member) {
   return adminUsers.includes(member.id) || memberHasAnyRole(member, adminRoles);
 }
 
+function isConfiguredModerator(db, member) {
+  if (!member?.guild) return false;
+  if (isConfiguredAdmin(db, member)) return true;
+  const guildId = member.guild.id;
+  const moderatorUsers = db.getConfig(guildId, 'moderator_users', []);
+  const moderatorRoles = db.getConfig(guildId, 'moderator_roles', []);
+  return moderatorUsers.includes(member.id) || memberHasAnyRole(member, moderatorRoles);
+}
+
 function isGuildAdmin(db, member) {
   if (!member?.guild) return false;
   if (isConfiguredAdmin(db, member)) return true;
   if (member.id === member.guild.ownerId) return true;
-  return member.permissions.has(PermissionsBitField.Flags.Administrator);
+  return false;
 }
 
 function isGuildModerator(db, member) {
   if (!member?.guild) return false;
   if (isGuildAdmin(db, member)) return true;
-  return member.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
-    member.permissions.has(PermissionsBitField.Flags.ModerateMembers) ||
-    member.permissions.has(PermissionsBitField.Flags.KickMembers) ||
-    member.permissions.has(PermissionsBitField.Flags.BanMembers);
+  return isConfiguredModerator(db, member);
 }
 
 function canRestrict(db, member) {
@@ -44,7 +49,7 @@ function canRestrict(db, member) {
 
 function canUseRestrictButtons(db, member) {
   if (!member?.guild) return false;
-  if (isConfiguredAdmin(db, member)) return true;
+  if (isGuildModerator(db, member)) return true;
   const roles = db.getConfig(member.guild.id, 'authorized_roles', []);
   return memberHasAnyRole(member, roles);
 }
@@ -57,19 +62,19 @@ function requireBotOwner(userId) {
 
 function requireModerator(db, member) {
   if (!isGuildModerator(db, member)) {
-    throw new Error('You need moderator permissions or configured admin access.');
+    throw new Error('You need dashboard moderator or admin access.');
   }
 }
 
 function requireAdmin(db, member) {
   if (!isGuildAdmin(db, member)) {
-    throw new Error('You need Administrator permission or configured admin access.');
+    throw new Error('You need dashboard admin access or server owner access.');
   }
 }
 
 function requireRestrict(db, member) {
   if (!canRestrict(db, member)) {
-    throw new Error('You need the configured restrict permissions role or moderator access.');
+    throw new Error('You need the configured restrict permissions role or dashboard moderator/admin access.');
   }
 }
 
@@ -84,6 +89,7 @@ function manageable(member, targetMember) {
 module.exports = {
   isBotOwner,
   isConfiguredAdmin,
+  isConfiguredModerator,
   isGuildAdmin,
   isGuildModerator,
   canRestrict,

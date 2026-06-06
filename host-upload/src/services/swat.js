@@ -1,5 +1,7 @@
-const { PermissionsBitField } = require('discord.js');
+const { ChannelType, PermissionsBitField } = require('discord.js');
+const { DEFAULT_GUILD_CONFIG } = require('../db');
 const { buildEmbed, success } = require('../embeds');
+const { requireAdmin } = require('../permissions');
 const ai = require('./ai');
 
 const EPISODES = [
@@ -165,6 +167,188 @@ function saveRecord(db, guildId, record) {
   db.setState(guildId, stateKey(record.stateName || 'case'), record);
 }
 
+function gameLabel(kind) {
+  if (kind === 'guess') return 'Episode Guessing Game';
+  return (ROLEPLAY_GAMES[kind] || ROLEPLAY_GAMES.case).label;
+}
+
+function channelNameConfigKey(kind) {
+  if (kind === 'case') return 'swat_case_channel_name';
+  if (kind === 'guess') return 'swat_guess_channel_name';
+  return 'swat_game_channel_name';
+}
+
+const NAME_TEMPLATE_OPTIONS = [
+  {
+    kind: 'case',
+    label: 'Case',
+    aliases: ['case', 'cases'],
+    key: channelNameConfigKey('case')
+  },
+  {
+    kind: 'game',
+    label: 'Game',
+    aliases: ['game', 'games', 'roleplay', 'roleplays'],
+    key: channelNameConfigKey('game')
+  },
+  {
+    kind: 'guess',
+    label: 'Guess',
+    aliases: ['guess', 'guesses', 'episode', 'episodes'],
+    key: channelNameConfigKey('guess')
+  }
+];
+
+function categoryConfigKey(kind) {
+  if (kind === 'case') return 'swat_case_category';
+  if (kind === 'guess') return 'swat_guess_category';
+  return 'swat_game_category';
+}
+
+function swatChannelName(db, guildId, kind, details = {}) {
+  const key = channelNameConfigKey(kind);
+  const fallback = DEFAULT_GUILD_CONFIG[key] || 'swat-case';
+  const template = db.getConfig(guildId, key, fallback) || fallback;
+  const replacements = {
+    kind,
+    game: gameLabel(kind),
+    title: details.title || '',
+    theme: details.theme || '',
+    episode: details.episode || details.title || ''
+  };
+  const name = String(template).replace(/\{(kind|game|title|theme|episode)\}/gi, (_, token) => replacements[token.toLowerCase()] || '');
+  return cleanChannelName(name, fallback);
+}
+
+function cleanChannelName(value, fallback) {
+  return String(value || fallback || 'swat-case')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100) || fallback;
+}
+
+function cleanNameTemplate(value, fallback) {
+  return String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100) || fallback;
+}
+
+function nameTemplateOption(input) {
+  const value = normalize(input);
+  if (value === 'all') return 'all';
+  return NAME_TEMPLATE_OPTIONS.find((option) => option.aliases.includes(value)) || null;
+}
+
+function nameTemplateValue(db, guildId, option) {
+  const fallback = DEFAULT_GUILD_CONFIG[option.key] || 'swat-case';
+  return db.getConfig(guildId, option.key, fallback) || fallback;
+}
+
+function nameTemplateFields(db, guildId) {
+  return NAME_TEMPLATE_OPTIONS.map((option) => ({
+    name: `${option.label} channel`,
+    value: `\`${option.key}\`\n${nameTemplateValue(db, guildId, option)}`,
+    inline: false
+  }));
+}
+
+async function showNameTemplates(message, db) {
+  await message.reply({
+    embeds: [
+      buildEmbed(db, message.guild.id, {
+        title: 'SWAT Channel Names',
+        description: [
+          '`swat name case 📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲` sets the case channel name.',
+          '`swat name game {game}` sets every SWAT game channel name.',
+          '`swat name guess {episode}` sets episode guessing channel names.',
+          '`swat name reset case|game|guess|all` restores defaults.',
+          'Placeholders: `{game}`, `{title}`, `{theme}`, `{episode}`, `{kind}`.'
+        ].join('\n'),
+        fields: nameTemplateFields(db, message.guild.id),
+        style: 'cyber'
+      })
+    ]
+  });
+}
+
+async function handleNameTemplateCommand(message, db, args) {
+  requireAdmin(db, message.member);
+
+  const action = normalize(args[0] || 'show');
+  if (!args.length || ['show', 'list', 'status', 'current'].includes(action)) {
+    await showNameTemplates(message, db);
+    return;
+  }
+
+  if (action === 'reset') {
+    const option = nameTemplateOption(args[1]);
+    if (!option) {
+      await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'SWAT Channel Names', description: 'Use `swat name reset case`, `swat name reset game`, `swat name reset guess`, or `swat name reset all`.', style: 'amber' })] });
+      return;
+    }
+    const options = option === 'all' ? NAME_TEMPLATE_OPTIONS : [option];
+    options.forEach((entry) => db.setConfig(message.guild.id, entry.key, DEFAULT_GUILD_CONFIG[entry.key] || 'swat-case'));
+    await message.reply({ embeds: [success(db, message.guild.id, `Reset ${option === 'all' ? 'all SWAT channel name templates' : `${option.label.toLowerCase()} channel name template`}.`, 'SWAT Channel Names')] });
+    return;
+  }
+
+  const startsWithSet = ['set', 'update', 'change'].includes(action);
+  const option = nameTemplateOption(startsWithSet ? args[1] : args[0]);
+  const templateParts = startsWithSet ? args.slice(2) : args.slice(1);
+
+  if (!option || option === 'all' || !templateParts.join(' ').trim()) {
+    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'SWAT Channel Names', description: 'Use `swat name case 📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲`, `swat name game {game}`, or `swat name guess {episode}`.', style: 'amber' })] });
+    return;
+  }
+
+  const fallback = DEFAULT_GUILD_CONFIG[option.key] || 'swat-case';
+  const template = cleanNameTemplate(templateParts.join(' '), fallback);
+  db.setConfig(message.guild.id, option.key, template);
+  await message.reply({ embeds: [success(db, message.guild.id, `${option.label} channel names will now use:\n${template}`, 'SWAT Channel Names')] });
+}
+
+async function createSwatChannel(message, db, kind, details = {}) {
+  const channelName = swatChannelName(db, message.guild.id, kind, details);
+  const configuredCategoryId = db.getConfig(message.guild.id, categoryConfigKey(kind));
+  const configuredCategory = configuredCategoryId
+    ? message.guild.channels.cache.get(configuredCategoryId)
+    : null;
+  const parent = configuredCategory?.type === ChannelType.GuildCategory
+    ? configuredCategory.id
+    : message.channel.parentId || undefined;
+  return message.guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent,
+    topic: `${gameLabel(kind)}. First correct normal message wins; the channel locks when solved.`,
+    rateLimitPerUser: 2,
+    reason: `SWAT ${kind} started by ${message.author.tag || message.author.id}`
+  });
+}
+
+async function createGameChannelOrCurrent(message, db, kind, details = {}) {
+  return createSwatChannel(message, db, kind, details).catch(() => message.channel);
+}
+
+async function lockSwatChannel(channel, guild, reason) {
+  if (!channel?.permissionOverwrites?.edit || !guild?.id) return false;
+  await channel.permissionOverwrites.edit(
+    guild.id,
+    { SendMessages: false },
+    { reason }
+  ).catch(() => null);
+  return true;
+}
+
+async function grantWinnerRole(message, db, reason) {
+  const roleId = db.getConfig(message.guild.id, 'swat_guess_role');
+  if (roleId) await message.member?.roles?.add(roleId, reason).catch(() => null);
+  return roleId;
+}
+
 function savePoints(db, guildId, userId, amount, event = {}) {
   const points = db.getState(guildId, stateKey('points'), {});
   points[userId] = Number(points[userId] || 0) + amount;
@@ -264,7 +448,7 @@ async function generateScenario(kind, theme, moderatorTag) {
     behavior: 'Return compact valid JSON only. Make each scenario different, cinematic, and solvable.',
     maxTokens: 900,
     temperature: 0.95
-  });
+  }).catch(() => null);
   const parsed = parseJsonObject(answer);
   if (!parsed) return fallback;
   return normalizeScenario(parsed, fallback);
@@ -293,35 +477,59 @@ async function startRoleplay(message, db, kind, theme = '') {
   const gameKind = ROLEPLAY_GAMES[kind] ? kind : 'case';
   const resolvedTheme = resolveSwatTheme(theme);
   const scenario = await generateScenario(gameKind, resolvedTheme, message.author.tag || message.author.username);
+  const displayTheme = isRandomTheme(theme) ? 'AI random SWAT story' : resolvedTheme;
+  const caseChannel = await createGameChannelOrCurrent(message, db, gameKind, {
+    title: scenario.title,
+    theme: displayTheme
+  });
   const record = {
     ...scenario,
     id: `${Date.now()}`,
     kind: gameKind,
     stateName: gameKind === 'case' ? 'case' : 'game',
-    channelId: message.channel.id,
+    channelId: caseChannel.id,
+    commandChannelId: message.channel.id,
     guildId: message.guild.id,
     startedBy: message.author.id,
     createdAt: Date.now(),
     solvedBy: null,
     solvedAt: null,
     points: ROLEPLAY_GAMES[gameKind].points,
-    theme: isRandomTheme(theme) ? 'AI random SWAT story' : resolvedTheme
+    theme: displayTheme
   };
   saveRecord(db, message.guild.id, record);
-  await showCase(message, db, record);
+  if (caseChannel.id === message.channel.id) {
+    await showCase(message, db, record);
+  } else {
+    await caseChannel.send(caseFilePayload(db, message.guild.id, record));
+    await message.reply({
+      embeds: [
+        success(
+          db,
+          message.guild.id,
+          `Created ${caseChannel} for **${record.title}**. Members should answer there with normal messages; AI will judge and lock the channel when solved.`,
+          gameKind === 'case' ? 'SWAT Case Created' : 'SWAT Game Created'
+        )
+      ]
+    });
+  }
   return record;
 }
 
 async function showCase(message, db, record = currentCase(db, message.guild.id)) {
   if (!record) {
-    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'Case Files', description: 'No active case. Use `swat case new theme` or `swat case new random` to create one.', style: 'amber' })] });
+    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'Case Files', description: 'No active case. Use `swat case new theme` or `swat case new random` to create one. Set `swat_case_channel_name` in the dashboard to control the created channel name.', style: 'amber' })] });
     return;
   }
 
+  await message.reply(caseFilePayload(db, message.guild.id, record));
+}
+
+function caseFilePayload(db, guildId, record) {
   const solved = record.solvedBy ? `\n\nSolved by <@${record.solvedBy}> <t:${Math.floor(record.solvedAt / 1000)}:R>.` : '';
-  await message.reply({
+  return {
     embeds: [
-      buildEmbed(db, message.guild.id, {
+      buildEmbed(db, guildId, {
         title: `Case File - ${record.title}`,
         description: [
           `Channel: <#${record.channelId}>`,
@@ -341,13 +549,13 @@ async function showCase(message, db, record = currentCase(db, message.guild.id))
         style: record.solvedBy ? 'emerald' : 'royal'
       })
     ]
-  });
+  };
 }
 
 async function showGame(message, db) {
   const record = currentGame(db, message.guild.id);
   if (!record) {
-    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'SWAT Game', description: 'No active roleplay game. Use `swat game start hostage theme`.', style: 'amber' })] });
+    await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'SWAT Game', description: 'No active roleplay game. Use `swat game start hostage theme`. Set `swat_game_channel_name` in the dashboard to control game channel names.', style: 'amber' })] });
     return;
   }
   await showCase(message, db, record);
@@ -364,7 +572,7 @@ async function handleSwatRoleplayMessage(message, db) {
   if (!message.guild || message.author.bot || !message.content.trim()) return false;
   const records = [currentCase(db, message.guild.id), currentGame(db, message.guild.id)]
     .filter((record) => record && !record.solvedBy && record.channelId === message.channel.id);
-  if (!records.length) return false;
+  if (!records.length) return handleGuessChannelMessage(message, db);
 
   for (const record of records) {
     if (message.createdTimestamp && Number(message.createdTimestamp) <= Number(record.createdAt || 0)) continue;
@@ -373,7 +581,7 @@ async function handleSwatRoleplayMessage(message, db) {
     await completeRoleplay(message, db, record, result.reason);
     return true;
   }
-  return false;
+  return handleGuessChannelMessage(message, db);
 }
 
 async function judgeRoleplayMessage(record, message) {
@@ -398,7 +606,7 @@ async function judgeRoleplayMessage(record, message) {
     behavior: 'Return valid JSON only.',
     maxTokens: 120,
     temperature: 0.1
-  });
+  }).catch(() => null);
   const parsed = parseJsonObject(answer);
   return {
     solved: Boolean(parsed?.solved),
@@ -417,13 +625,7 @@ async function completeRoleplay(message, db, record, reason) {
     title: record.title
   });
 
-  const roleId = db.getConfig(message.guild.id, 'swat_guess_role');
-  if (roleId) await message.member.roles.add(roleId, 'SWAT roleplay winner').catch(() => null);
-  await message.channel.permissionOverwrites.edit(
-    message.guild.id,
-    { SendMessages: false },
-    { reason: `SWAT ${record.kind} solved by ${message.author.tag || message.author.id}` }
-  ).catch(() => null);
+  const roleId = await grantWinnerRole(message, db, 'SWAT roleplay winner');
 
   await message.channel.send({
     content: `${message.author}`,
@@ -442,27 +644,55 @@ async function completeRoleplay(message, db, record, reason) {
     ],
     allowedMentions: { users: [message.author.id], roles: [] }
   }).catch(() => null);
+  await lockSwatChannel(message.channel, message.guild, `SWAT ${record.kind} solved by ${message.author.tag || message.author.id}`);
 }
 
 async function startGuess(message, db, type = 'mission') {
   if (!isModerator(message)) throw new Error('Manage Server permission is required to start a SWAT guessing game.');
   const episode = EPISODES[Math.floor(Math.random() * EPISODES.length)];
+  const guessChannel = await createGameChannelOrCurrent(message, db, 'guess', {
+    title: episode.title,
+    episode: `S${episode.season}E${episode.episode} ${episode.title}`
+  });
   const game = {
     episodeId: episode.id,
     type,
     startedAt: Date.now(),
+    channelId: guessChannel.id,
+    commandChannelId: message.channel.id,
     winnerId: null
   };
   db.setState(message.guild.id, stateKey('guess'), game);
-  await message.reply({
+  const payload = {
     embeds: [
       buildEmbed(db, message.guild.id, {
         title: 'Episode Guessing Game',
-        description: `${guessingPrompt(type, episode)}\n\nFirst member to answer with \`swat guess episode title\` wins.`,
+        description: [
+          `Channel: <#${guessChannel.id}>`,
+          `${guessingPrompt(type, episode)}`,
+          '',
+          'First member to answer in this channel wins. The old `swat guess episode title` command still works too.'
+        ].join('\n'),
         style: 'violet'
       })
     ]
-  });
+  };
+
+  if (guessChannel.id === message.channel.id) {
+    await message.reply(payload);
+  } else {
+    await guessChannel.send(payload);
+    await message.reply({
+      embeds: [
+        success(
+          db,
+          message.guild.id,
+          `Created ${guessChannel} for the episode guessing game. Members can answer there with normal messages.`,
+          'SWAT Guess Created'
+        )
+      ]
+    });
+  }
 }
 
 function guessingPrompt(type, episode) {
@@ -477,17 +707,92 @@ async function guessEpisode(message, db, answer) {
   if (!game || game.winnerId) throw new Error('No active SWAT guessing game.');
   const episode = EPISODES.find((entry) => entry.id === game.episodeId);
   if (!episode) throw new Error('The active guessing game is missing its episode.');
-  const expected = normalize(`${episode.title} s${episode.season}e${episode.episode}`);
-  if (!normalize(answer) || !expected.includes(normalize(answer))) {
+  if (!localEpisodeHit(episode, answer, 2)) {
     await message.reply({ embeds: [buildEmbed(db, message.guild.id, { title: 'Episode Guess', description: 'Not quite. Keep investigating.', style: 'amber' })] });
     return;
   }
+  await completeGuess(message, db, game, episode, 'Matched the episode title.', true);
+}
+
+async function handleGuessChannelMessage(message, db) {
+  const game = db.getState(message.guild.id, stateKey('guess'), null);
+  if (!game || game.winnerId || game.channelId !== message.channel.id) return false;
+  if (message.createdTimestamp && Number(message.createdTimestamp) <= Number(game.startedAt || 0)) return false;
+  const episode = EPISODES.find((entry) => entry.id === game.episodeId);
+  if (!episode) return false;
+
+  const result = await judgeGuessMessage(game, episode, message);
+  if (!result.solved) return false;
+  await completeGuess(message, db, game, episode, result.reason, false);
+  return true;
+}
+
+async function judgeGuessMessage(game, episode, message) {
+  const content = String(message.content || '').trim();
+  if (content.length < 2) return { solved: false, reason: 'Too short.' };
+  if (localEpisodeHit(episode, content, 3)) return { solved: true, reason: 'Matched the episode title.' };
+
+  const prompt = [
+    'You are judging a SWAT Discord episode guessing answer.',
+    'Return JSON only: {"solved":true/false,"reason":"short reason"}.',
+    'Mark solved only if the member is clearly answering with this exact episode title or season/episode.',
+    'Ignore casual discussion, character names, and partial guesses that are not enough to identify the episode.',
+    `Clue type: ${game.type}`,
+    `Correct title: ${episode.title}`,
+    `Correct season episode: S${episode.season}E${episode.episode}`,
+    `Mission: ${episode.mission}`,
+    `Member message: ${content.slice(0, 500)}`
+  ].join('\n');
+  const answer = await ai.askAI(prompt, {
+    personality: 'You are a strict but fair SWAT episode game judge.',
+    behavior: 'Return valid JSON only.',
+    maxTokens: 100,
+    temperature: 0.1
+  }).catch(() => null);
+  const parsed = parseJsonObject(answer);
+  return {
+    solved: Boolean(parsed?.solved),
+    reason: cleanText(parsed?.reason, 'AI judged the episode answer correct.', 180)
+  };
+}
+
+async function completeGuess(message, db, game, episode, reason, replyToMessage) {
   game.winnerId = message.author.id;
+  game.solvedAt = Date.now();
   db.setState(message.guild.id, stateKey('guess'), game);
   savePoints(db, message.guild.id, message.author.id, 25, { win: true, type: 'episode_guess', title: episode.title });
-  const roleId = db.getConfig(message.guild.id, 'swat_guess_role');
-  if (roleId) await message.member.roles.add(roleId, 'SWAT episode guessing winner').catch(() => null);
-  await message.reply({ embeds: [success(db, message.guild.id, `Correct. It was **${episode.title}**. ${message.author} earned **25 SWAT points**.`)] });
+  const roleId = await grantWinnerRole(message, db, 'SWAT episode guessing winner');
+  const gameChannel = game.channelId
+    ? await message.guild.channels.fetch(game.channelId).catch(() => null)
+    : null;
+
+  const payload = {
+    embeds: [
+      success(
+        db,
+        message.guild.id,
+        [
+          `Correct. It was **${episode.title}**.`,
+          `${message.author} earned **25 SWAT points**.`,
+          `Reason: ${reason || 'Correct episode.'}`,
+          roleId ? `Reward role: <@&${roleId}>` : 'Set a SWAT reward role in setup to grant a role too.',
+          'Channel locked for game closed.'
+        ].join('\n'),
+        'SWAT Guess Closed'
+      )
+    ],
+    allowedMentions: { users: [message.author.id], roles: [] }
+  };
+
+  if (replyToMessage) {
+    if (gameChannel && gameChannel.id !== message.channel.id) {
+      await gameChannel.send({ content: `${message.author}`, ...payload }).catch(() => null);
+    }
+    await message.reply(payload);
+  } else {
+    await message.channel.send({ content: `${message.author}`, ...payload });
+  }
+  await lockSwatChannel(gameChannel || message.channel, message.guild, `SWAT episode guess solved by ${message.author.tag || message.author.id}`);
 }
 
 async function showAwards(message, db) {
@@ -531,7 +836,7 @@ async function decideSeasonAwards(rows, events) {
     behavior: 'Return compact valid JSON only.',
     maxTokens: 500,
     temperature: 0.75
-  });
+  }).catch(() => null);
   const parsed = parseJsonObject(answer);
   const awards = Array.isArray(parsed?.awards) ? parsed.awards : [];
   return awards
@@ -559,14 +864,18 @@ async function handleSwatMessage(message, db, raw) {
         buildEmbed(db, message.guild.id, {
           title: 'SWAT Help',
           description: [
-            '`swat case new theme` starts a big AI investigation in this channel.',
+            '`swat case new theme` or `swat case add theme` creates a SWAT case channel.',
             '`swat case new random` creates an original SWAT-only story when the moderator has no idea.',
-            '`swat game start hostage theme` starts an AI-judged roleplay game.',
+            '`swat game start hostage theme` creates an AI-judged roleplay game channel.',
+            '`swat name case|game|guess template` sets dashboard-backed channel names.',
+            '`swat name reset case|game|guess|all` restores default channel names.',
+            'Dashboard names: `swat_case_channel_name`, `swat_game_channel_name`, `swat_guess_channel_name`.',
+            'Name placeholders: `{game}`, `{title}`, `{theme}`, `{episode}`, `{kind}`.',
             '`swat games` lists custom SWAT game types.',
             '`swat case` / `swat game` shows the active file.',
             '`swat guess start quote|screenshot|dialogue|mission` / `swat guess episode title`',
             '`swat awards` lets AI decide season awards from SWAT history.',
-            'Cases and roleplay games are solved by normal messages in the start channel. No multiple choices.'
+            'Cases and all SWAT games are solved by normal messages in the created channel. No multiple choices.'
           ].join('\n'),
           style: 'sapphire'
         })
@@ -575,8 +884,18 @@ async function handleSwatMessage(message, db, raw) {
     return true;
   }
 
+  if (command === 'name' || command === 'names' || command === 'channelname' || command === 'channelnames') {
+    await handleNameTemplateCommand(message, db, args);
+    return true;
+  }
+
+  if (command === 'setup' && normalize(args[0]) === 'names') {
+    await handleNameTemplateCommand(message, db, args.slice(1));
+    return true;
+  }
+
   if (command === 'case') {
-    if (['new', 'start', 'create'].includes(normalize(args[0]))) {
+    if (['new', 'start', 'create', 'add'].includes(normalize(args[0]))) {
       await startRoleplay(message, db, 'case', args.slice(1).join(' '));
       return true;
     }
@@ -591,7 +910,7 @@ async function handleSwatMessage(message, db, raw) {
 
   if (command === 'game') {
     const first = normalize(args[0] || '');
-    if (['new', 'start', 'create'].includes(first)) {
+    if (['new', 'start', 'create', 'add'].includes(first)) {
       const kind = normalize(args[1] || 'hostage');
       await startRoleplay(message, db, kind, args.slice(2).join(' '));
       return true;
@@ -657,12 +976,41 @@ async function handleSwatMessage(message, db, raw) {
   return true;
 }
 
+async function handleSwatNameInteraction(interaction, db) {
+  const subcommand = interaction.options.getSubcommand(false) || 'show';
+  if (subcommand === 'set') {
+    await handleNameTemplateCommand(interaction, db, [
+      interaction.options.getString('kind'),
+      interaction.options.getString('template')
+    ]);
+    return;
+  }
+  if (subcommand === 'reset') {
+    await handleNameTemplateCommand(interaction, db, [
+      'reset',
+      interaction.options.getString('kind')
+    ]);
+    return;
+  }
+  await handleNameTemplateCommand(interaction, db, []);
+}
+
 function localSolutionHit(record, content) {
   const haystack = normalize(content);
   return (record.aliases || [])
     .map((alias) => normalize(alias))
     .filter((alias) => alias.length >= 4)
     .some((alias) => haystack.includes(alias));
+}
+
+function localEpisodeHit(episode, content, minLength = 2) {
+  const guess = normalize(content);
+  if (!guess || guess.length < minLength) return false;
+  const title = normalize(episode.title);
+  const seasonEpisode = normalize(`s${episode.season}e${episode.episode}`);
+  const spacedSeasonEpisode = normalize(`season ${episode.season} episode ${episode.episode}`);
+  const accepted = [title, seasonEpisode, spacedSeasonEpisode];
+  return accepted.some((answer) => answer === guess || answer.includes(guess) || guess.includes(answer));
 }
 
 function parseJsonObject(text) {
@@ -701,5 +1049,6 @@ function titleCase(value) {
 
 module.exports = {
   handleSwatMessage,
+  handleSwatNameInteraction,
   handleSwatRoleplayMessage
 };

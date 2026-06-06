@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Bot Dashboard</title>
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="stylesheet" href="styles.css?v=14">
   </head>
   <body>
     <div id="loginView" class="login-view is-hidden">
@@ -395,6 +395,7 @@
                   <button class="is-active" type="button" data-boolean-value="true">Enabled</button>
                   <button type="button" data-boolean-value="false">Disabled</button>
                 </div>
+                <div id="configCustomEditor" class="config-custom-editor wide is-hidden"></div>
                 <button type="submit">Save</button>
               </form>
               <div class="table-wrap">
@@ -415,6 +416,71 @@
                 <h2>Active Restrictions</h2>
               </div>
               <div id="restrictionList" class="data-list"></div>
+            </section>
+          </div>
+
+          <div class="content-grid">
+            <section class="panel role-react-studio">
+              <div class="panel-head">
+                <h2>Reaction Role Studio</h2>
+                <div class="panel-actions">
+                  <span id="roleReactStatus" class="muted"></span>
+                  <button id="roleReactNewButton" class="secondary-button compact" type="button">New Panel</button>
+                </div>
+              </div>
+              <form id="roleReactForm" class="ticket-form">
+                <label>
+                  Panel ID
+                  <input id="roleReactPanelIdInput" type="text" maxlength="40" placeholder="game-roles">
+                </label>
+                <div class="field-block">
+                  <span>Message source</span>
+                  <div class="segmented-control role-react-source-control" role="group" aria-label="Reaction role source">
+                    <button class="is-active" type="button" data-role-react-source="bot">Bot sends new</button>
+                    <button type="button" data-role-react-source="existing">Use existing</button>
+                  </div>
+                  <input id="roleReactSourceInput" type="hidden" value="bot">
+                </div>
+                <label>
+                  Channel
+                  <select id="roleReactChannelSelect"></select>
+                </label>
+                <label>
+                  Existing message ID or link
+                  <input id="roleReactMessageInput" type="text" maxlength="120" placeholder="Message link or ID">
+                </label>
+                <label>
+                  Title
+                  <input id="roleReactTitleInput" type="text" maxlength="120" value="Choose Your Roles">
+                </label>
+                <label class="check-row">
+                  <input id="roleReactRemoveInput" type="checkbox" checked>
+                  Remove role when reaction is removed
+                </label>
+                <label class="wide">
+                  Description
+                  <textarea id="roleReactDescriptionInput" rows="3" maxlength="1800" placeholder="React below to get or remove roles."></textarea>
+                </label>
+                <label class="wide">
+                  Message content
+                  <textarea id="roleReactContentInput" rows="2" maxlength="1900" placeholder="Optional text above the role panel"></textarea>
+                </label>
+                <div class="builder-section wide">
+                  <div class="builder-head">
+                    <h3>Emoji Roles</h3>
+                    <button id="roleReactAddOptionButton" class="secondary-button compact" type="button">Add Role</button>
+                  </div>
+                  <div id="roleReactOptionList" class="builder-list"></div>
+                </div>
+                <button class="primary-button wide" type="submit">Save Reaction Roles</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Reaction Role Panels</h2>
+              </div>
+              <div id="roleReactPanelList" class="ticket-panel-list"></div>
             </section>
           </div>
 

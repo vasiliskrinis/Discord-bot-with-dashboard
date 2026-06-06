@@ -693,6 +693,8 @@ tbody tr:last-child td {
   .presence-form,
   .config-form,
   .embed-workbench,
+  .config-editor-row,
+  .role-reward-row,
   .embed-builder,
   .builder-row,
   .embed-button-row,
@@ -1306,9 +1308,91 @@ body {
   grid-column: 1 / -1;
 }
 
+.config-custom-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.custom-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.custom-editor-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.custom-editor-head span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.config-editor-list,
+.role-reward-list {
+  display: grid;
+  gap: 10px;
+}
+
+.config-editor-row,
+.role-reward-row {
+  display: grid;
+  grid-template-columns: 32px minmax(120px, 0.35fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.invite-role-row,
+.invite-count-row {
+  grid-template-columns: 32px minmax(180px, 1fr) minmax(180px, 1fr) auto;
+}
+
+.setting-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.setting-editor-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.token-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.config-form button.token-button {
+  width: auto;
+  min-height: 34px;
+  margin: 0;
+  padding-inline: 12px;
+}
+
+.reward-index {
+  align-self: center;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .config-cell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
 }
@@ -1570,7 +1654,6 @@ body {
 
   .action-bar,
   .control-form,
-  .server-control-grid,
   .backup-actions,
   .mini-grid {
     grid-template-columns: 1fr;
@@ -1578,15 +1661,9 @@ body {
 
   .action-group,
   .danger-group,
-  .button-row,
   .modal-actions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .button-row {
-    display: grid;
-    grid-template-columns: 1fr;
   }
 
   .danger-group input {
@@ -2516,7 +2593,6 @@ textarea {
   .commands-hero,
   .commands-layout,
   .compact-stats,
-  .server-control-grid,
   .tickets-workspace {
     grid-template-columns: 1fr;
   }
@@ -2554,7 +2630,6 @@ textarea {
 .action-bar,
 .ticket-panel-row,
 .command-card,
-.control-card,
 .mini-card {
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
@@ -2572,7 +2647,6 @@ textarea {
 .server-header:hover,
 .ticket-panel-row:hover,
 .command-card:hover,
-.control-card:hover,
 .mini-card:hover {
   border-color: rgba(49, 198, 178, 0.34);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
@@ -2580,7 +2654,6 @@ textarea {
 
 .stat-card:hover,
 .command-card:hover,
-.control-card:hover,
 .ticket-panel-row:hover {
   transform: translateY(-1px);
 }
@@ -2660,4 +2733,65 @@ tbody tr:hover td {
 .switch-row:hover,
 .builder-row:hover {
   border-color: rgba(49, 198, 178, 0.3);
+}
+
+.setup-editor-head {
+  border-color: rgba(49, 198, 178, 0.28);
+  background: linear-gradient(135deg, rgba(49, 91, 234, 0.14), rgba(49, 198, 178, 0.08));
+}
+
+.setup-editor-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-color: rgba(154, 170, 203, 0.22);
+  background: rgba(12, 18, 31, 0.46);
+}
+
+.setup-feature-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(154, 170, 203, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.setup-feature-title {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+}
+
+.setup-feature-title strong {
+  color: var(--text);
+}
+
+.setup-feature-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setup-feature-card .token-row {
+  grid-column: 1 / -1;
+}
+
+.token-row {
+  align-items: center;
+}
+
+.config-form button.token-button {
+  border-color: rgba(49, 198, 178, 0.28);
+  background: rgba(49, 198, 178, 0.08);
+  color: #a8fff2;
+}
+
+.config-form button.token-button:hover {
+  background: rgba(49, 198, 178, 0.16);
+}
+
+@media (max-width: 760px) {
+  .setup-editor-grid,
+  .setup-feature-card {
+    grid-template-columns: 1fr;
+  }
 }

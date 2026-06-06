@@ -85,6 +85,7 @@ The setup menu configures:
 - Admin users, admin roles, and restrict-review authorized roles.
 - Embed style.
 - Welcome message, sticky message, and ticket panels.
+- Dashboard custom editors for structured settings such as role-level rewards.
 - Clear/reset saved channels, roles, access lists, welcome text, invite role rewards, and sticky messages.
 
 ## Bot Owner Prefix

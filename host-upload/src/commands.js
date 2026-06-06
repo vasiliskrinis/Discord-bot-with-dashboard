@@ -101,7 +101,7 @@ const SETUP_CHANNELS = [
   {
     key: 'achievement_channel',
     label: 'Achievement Channel',
-    description: 'Achievement unlock announcements.',
+    description: 'Achievement unlock announcement channel.',
     types: [ChannelType.GuildText]
   },
   {
@@ -135,14 +135,19 @@ const SETUP_SINGLE_ROLES = [
     description: 'Role pinged for Roblox/executor updates.'
   },
   {
+    key: 'bump_ping_role',
+    label: 'Bump Ping Role',
+    description: 'Role pinged when members bump the server.'
+  },
+  {
     key: 'verified_role',
     label: 'Verified Role',
     description: 'Role given when a member verifies.'
   },
   {
     key: 'swat_guess_role',
-    label: 'SWAT Guess Reward',
-    description: 'Role given to first correct episode guesser.'
+    label: 'SWAT Winner Reward',
+    description: 'Role given to first correct SWAT case or game winner.'
   },
   {
     key: 'auto_role',
@@ -155,13 +160,25 @@ const SETUP_LISTS = [
   {
     key: 'admin_users',
     label: 'Admin Users',
-    description: 'Users allowed to use bot admin/mod setup.',
+    description: 'Users allowed to use every bot command and setup.',
     type: 'user'
   },
   {
     key: 'admin_roles',
     label: 'Admin Roles',
-    description: 'Roles allowed to use bot admin/mod setup.',
+    description: 'Roles allowed to use every bot command and setup.',
+    type: 'role'
+  },
+  {
+    key: 'moderator_users',
+    label: 'Moderator Users',
+    description: 'Users allowed to use moderation commands except dangerous ones.',
+    type: 'user'
+  },
+  {
+    key: 'moderator_roles',
+    label: 'Moderator Roles',
+    description: 'Roles allowed to use moderation commands except dangerous ones.',
     type: 'role'
   },
   {
@@ -226,7 +243,7 @@ const PREFIX_ALIASES = {
   embedcreate: 'embed-create',
   boosterrole: 'booster-role',
   bal: 'balance',
-  coins: 'balance',
+  coins: 'coins',
   economy: 'profile',
   rank: 'level',
   levels: 'leaderboard',
@@ -238,6 +255,29 @@ const PREFIX_ALIASES = {
   channelrestriction: 'channel-restriction',
   masssynccategories: 'mass-sync-categories',
   syncchannels: 'mass-sync-categories',
+  createchannel: 'channel-create',
+  channelcreate: 'channel-create',
+  renamechannel: 'channel-rename',
+  channelrename: 'channel-rename',
+  deletechannel: 'channel-delete',
+  channeldelete: 'channel-delete',
+  updatechannel: 'channel-update',
+  channelupdate: 'channel-update',
+  movechannel: 'channel-update',
+  createcategory: 'category-create',
+  categorycreate: 'category-create',
+  renamecategory: 'category-rename',
+  categoryrename: 'category-rename',
+  deletecategory: 'category-delete',
+  categorydelete: 'category-delete',
+  createrole: 'role-create',
+  rolecreate: 'role-create',
+  renamerole: 'role-rename',
+  rolerename: 'role-rename',
+  deleterole: 'role-delete',
+  roledelete: 'role-delete',
+  renameserver: 'server-rename',
+  serverrename: 'server-rename',
   invite: 'invites',
   invitescount: 'invites',
   inviterole: 'invite-role',
@@ -289,7 +329,10 @@ const LOCKED_NORMAL_COMMANDS = new Set([
   'softban', 'mass-ban', 'purge', 'dm', 'say', 'lock', 'unlock', 'lockdown', 'unlockdown',
   'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user',
   'temp-role', 'temp-role-remove', 'set-nick', 'move', 'giveaway', 'steal-emoji',
-  'steal-sticker', 'embed-create', 'invite-role', 'role-invites'
+  'steal-sticker', 'embed-create', 'invite-role', 'role-invites',
+  'channel-create', 'channel-rename', 'channel-delete', 'channel-update',
+  'category-create', 'category-rename', 'category-delete',
+  'role-create', 'role-rename', 'role-delete', 'server-rename'
 ]);
 
 const ACTIVITY_TYPES = {
@@ -299,6 +342,172 @@ const ACTIVITY_TYPES = {
   watching: ActivityType.Watching,
   competing: ActivityType.Competing
 };
+
+const CHANNEL_ADMIN_TYPES = {
+  text: ChannelType.GuildText,
+  voice: ChannelType.GuildVoice,
+  announcement: ChannelType.GuildAnnouncement,
+  forum: ChannelType.GuildForum,
+  stage: ChannelType.GuildStageVoice
+};
+
+const CHANNEL_ADMIN_CHANNEL_TYPES = [
+  ChannelType.GuildText,
+  ChannelType.GuildVoice,
+  ChannelType.GuildAnnouncement,
+  ChannelType.GuildForum,
+  ChannelType.GuildStageVoice
+];
+
+const SERVER_ADMIN_COMMANDS = new Set([
+  'channel-create',
+  'channel-rename',
+  'channel-delete',
+  'channel-update',
+  'category-create',
+  'category-rename',
+  'category-delete',
+  'role-create',
+  'role-rename',
+  'role-delete',
+  'server-rename'
+]);
+
+const DANGEROUS_COMMANDS = new Set([
+  'ban',
+  'unban',
+  'kick',
+  'softban',
+  'mass-ban',
+  'lockdown',
+  'unlockdown',
+  'give-role',
+  'remove-role',
+  'temp-role',
+  'temp-role-remove',
+  'channel-create',
+  'channel-rename',
+  'channel-delete',
+  'channel-update',
+  'category-create',
+  'category-rename',
+  'category-delete',
+  'role-create',
+  'role-rename',
+  'role-delete',
+  'server-rename',
+  'invite-role',
+  'role-invites',
+  'role-level',
+  'verification',
+  'channel-restriction',
+  'mass-sync-categories',
+  'setup',
+  'swat-name'
+]);
+
+function requireCommandAccess(db, member, command) {
+  if (DANGEROUS_COMMANDS.has(command)) requireAdmin(db, member);
+  else requireModerator(db, member);
+}
+
+function serverAdminSlashCommands() {
+  const channelOption = (option) => option
+    .setName('channel')
+    .setDescription('Channel.')
+    .setRequired(true)
+    .addChannelTypes(...CHANNEL_ADMIN_CHANNEL_TYPES);
+  const categoryOption = (option) => option
+    .setName('category')
+    .setDescription('Category.')
+    .setRequired(true)
+    .addChannelTypes(ChannelType.GuildCategory);
+
+  return [
+    new SlashCommandBuilder()
+      .setName('channel-create')
+      .setDescription('Create a server channel.')
+      .addStringOption((option) => option.setName('type').setDescription('Channel type.').setRequired(true).addChoices(
+        { name: 'Text', value: 'text' },
+        { name: 'Voice', value: 'voice' },
+        { name: 'Announcement', value: 'announcement' },
+        { name: 'Forum', value: 'forum' },
+        { name: 'Stage', value: 'stage' }
+      ))
+      .addStringOption((option) => option.setName('name').setDescription('Channel name.').setRequired(true).setMaxLength(100))
+      .addChannelOption((option) => option.setName('category').setDescription('Parent category.').addChannelTypes(ChannelType.GuildCategory))
+      .addStringOption((option) => option.setName('topic').setDescription('Topic for text/forum channels.').setMaxLength(1024))
+      .addIntegerOption((option) => option.setName('slowmode').setDescription('Slowmode seconds.').setMinValue(0).setMaxValue(21600)),
+
+    new SlashCommandBuilder()
+      .setName('channel-rename')
+      .setDescription('Rename a server channel.')
+      .addChannelOption(channelOption)
+      .addStringOption((option) => option.setName('name').setDescription('New channel name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('channel-delete')
+      .setDescription('Delete a server channel.')
+      .addChannelOption(channelOption)
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm channel deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('channel-update')
+      .setDescription('Update channel category, topic, slowmode, or lock state.')
+      .addChannelOption(channelOption)
+      .addChannelOption((option) => option.setName('category').setDescription('New parent category.').addChannelTypes(ChannelType.GuildCategory))
+      .addStringOption((option) => option.setName('topic').setDescription('New topic.').setMaxLength(1024))
+      .addIntegerOption((option) => option.setName('slowmode').setDescription('Slowmode seconds.').setMinValue(0).setMaxValue(21600))
+      .addStringOption((option) => option.setName('send_messages').setDescription('Lock or unlock @everyone sending.').addChoices(
+        { name: 'No change', value: 'keep' },
+        { name: 'Locked', value: 'lock' },
+        { name: 'Unlocked', value: 'unlock' }
+      )),
+
+    new SlashCommandBuilder()
+      .setName('category-create')
+      .setDescription('Create a server category.')
+      .addStringOption((option) => option.setName('name').setDescription('Category name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('category-rename')
+      .setDescription('Rename a server category.')
+      .addChannelOption(categoryOption)
+      .addStringOption((option) => option.setName('name').setDescription('New category name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('category-delete')
+      .setDescription('Delete a server category.')
+      .addChannelOption(categoryOption)
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm category deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('role-create')
+      .setDescription('Create a server role.')
+      .addStringOption((option) => option.setName('name').setDescription('Role name.').setRequired(true).setMaxLength(100))
+      .addStringOption((option) => option.setName('color').setDescription('Hex color like #5865f2.'))
+      .addBooleanOption((option) => option.setName('display').setDescription('Display role separately.'))
+      .addBooleanOption((option) => option.setName('mentionable').setDescription('Allow members to mention this role.')),
+
+    new SlashCommandBuilder()
+      .setName('role-rename')
+      .setDescription('Rename a server role.')
+      .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
+      .addStringOption((option) => option.setName('name').setDescription('New role name.').setRequired(true).setMaxLength(100)),
+
+    new SlashCommandBuilder()
+      .setName('role-delete')
+      .setDescription('Delete a server role.')
+      .addRoleOption((option) => option.setName('role').setDescription('Role.').setRequired(true))
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm role deletion.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('server-rename')
+      .setDescription('Rename this server.')
+      .addStringOption((option) => option.setName('name').setDescription('New server name.').setRequired(true).setMinLength(2).setMaxLength(100))
+      .addBooleanOption((option) => option.setName('confirm').setDescription('Confirm server rename.').setRequired(true))
+  ];
+}
 
 function slashCommands() {
   const commands = [
@@ -617,8 +826,63 @@ function slashCommands() {
 
     new SlashCommandBuilder()
       .setName('level')
-      .setDescription('Show a member level.')
-      .addUserOption((option) => option.setName('user').setDescription('Member.')),
+      .setDescription('Show or manage member levels.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show a member level card.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.'))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Add levels to a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many levels to add.').setRequired(true).setMinValue(1).setMaxValue(500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove levels from a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many levels to remove.').setRequired(true).setMinValue(1).setMaxValue(500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset a member level and XP.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('coins')
+      .setDescription('Show or manage member coins.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show a member coin balance.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.'))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Add coins to a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many coins to add.').setRequired(true).setMinValue(1).setMaxValue(100000000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove coins from a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many coins to remove.').setRequired(true).setMinValue(1).setMaxValue(100000000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription("Reset a member's coins to zero.")
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+      ),
 
     new SlashCommandBuilder()
       .setName('leaderboard')
@@ -672,6 +936,8 @@ function slashCommands() {
       .setName('mass-sync-categories')
       .setDescription('Sync all child channels with their category permissions.'),
 
+    ...serverAdminSlashCommands(),
+
     new SlashCommandBuilder()
       .setName('bump')
       .setDescription('Bump the server with the configured cooldown.'),
@@ -687,7 +953,13 @@ function slashCommands() {
       )
       .addSubcommand((sub) => sub.setName('feed').setDescription('Feed your digital pet.'))
       .addSubcommand((sub) => sub.setName('play').setDescription('Play with your digital pet.'))
-      .addSubcommand((sub) => sub.setName('status').setDescription('Show your digital pet.')),
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show your digital pet.'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset your digital pet.')
+          .addUserOption((option) => option.setName('user').setDescription('Moderator only: pet owner to reset.'))
+      ),
 
     new SlashCommandBuilder()
       .setName('qna')
@@ -700,6 +972,37 @@ function slashCommands() {
           .addStringOption((option) => option.setName('personality').setDescription('How the bot should answer in Q&A.').setRequired(true))
       )
       .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.')),
+
+    new SlashCommandBuilder()
+      .setName('swat-name')
+      .setDescription('Configure SWAT channel name templates.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show the current SWAT channel name templates.')
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('set')
+          .setDescription('Set a SWAT channel name template.')
+          .addStringOption((option) => option.setName('kind').setDescription('Which SWAT channel name to edit.').setRequired(true).addChoices(
+            { name: 'Case', value: 'case' },
+            { name: 'Game', value: 'game' },
+            { name: 'Guess', value: 'guess' }
+          ))
+          .addStringOption((option) => option.setName('template').setDescription('Example: 📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲 or {game}.').setRequired(true).setMaxLength(100))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset a SWAT channel name template.')
+          .addStringOption((option) => option.setName('kind').setDescription('Which template to reset.').setRequired(true).addChoices(
+            { name: 'Case', value: 'case' },
+            { name: 'Game', value: 'game' },
+            { name: 'Guess', value: 'guess' },
+            { name: 'All', value: 'all' }
+          ))
+      ),
 
     new SlashCommandBuilder()
       .setName('invite-role')
@@ -722,7 +1025,6 @@ function slashCommands() {
     new SlashCommandBuilder()
       .setName('role-invites')
       .setDescription('Give inviters a role when they reach an invite count.')
-      .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
       .addIntegerOption((option) => option.setName('invites').setDescription('Invite count required.').setRequired(true).setMinValue(1).setMaxValue(1000000))
       .addRoleOption((option) => option.setName('role').setDescription('Role to give when that invite count is reached.').setRequired(true)),
 
@@ -936,7 +1238,7 @@ function setupSectionRow() {
       .addOptions(
         { label: 'Channels', value: 'channels', description: 'Logs, restrict, updates, counting, welcome.' },
         { label: 'Roles', value: 'roles', description: 'Restrict role, restrict perms, update ping.' },
-        { label: 'Admins & Access', value: 'access', description: 'Admin users, admin roles, review roles.' },
+        { label: 'Admins & Access', value: 'access', description: 'Admin users, moderator users/roles, review roles.' },
         { label: 'Embed Style', value: 'style', description: 'Change the embed style used by the bot.' },
         { label: 'Messages & Tickets', value: 'text', description: 'Welcome message, sticky message, ticket panel.' },
         { label: 'Clear Settings', value: 'clear', description: 'Clear channels, roles, access lists, welcome, or sticky.' },
@@ -1189,7 +1491,7 @@ async function clearSetupSetting(db, interaction, key) {
 
 async function handleSetupInteraction(db, interaction) {
   ensureGuild(interaction);
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   db.ensureGuildConfig(interaction.guild.id);
 
   if (interaction.isButton() && interaction.customId === 'setup:home') {
@@ -1436,7 +1738,7 @@ async function handleSlash(interaction, db, client) {
     assertNormalCommandUnlocked(db, name);
     switch (name) {
       case 'setup': {
-        requireModerator(db, interaction.member);
+        requireAdmin(db, interaction.member);
         await reply(interaction, setupHomePayload(db, interaction.guild.id), true);
         break;
       }
@@ -1596,6 +1898,21 @@ async function handleSlash(interaction, db, client) {
         break;
       }
 
+      case 'channel-create':
+      case 'channel-rename':
+      case 'channel-delete':
+      case 'channel-update':
+      case 'category-create':
+      case 'category-rename':
+      case 'category-delete':
+      case 'role-create':
+      case 'role-rename':
+      case 'role-delete':
+      case 'server-rename': {
+        await handleServerAdminSlash(interaction, db);
+        break;
+      }
+
       case 'embed-create': {
         assertAiFeaturesAvailable(db);
         await interaction.deferReply();
@@ -1623,6 +1940,7 @@ async function handleSlash(interaction, db, client) {
       }
 
       case 'balance':
+      case 'coins':
       case 'daily':
       case 'profile':
       case 'level':
@@ -1633,6 +1951,11 @@ async function handleSlash(interaction, db, client) {
 
       case 'role-level': {
         await handleRoleLevelSlash(interaction, db);
+        break;
+      }
+
+      case 'swat-name': {
+        await swat.handleSwatNameInteraction(interaction, db);
         break;
       }
 
@@ -1658,8 +1981,8 @@ async function handleSlash(interaction, db, client) {
 }
 
 async function handleModerationSlash(interaction, db, client) {
-  requireModerator(db, interaction.member);
   const name = interaction.commandName;
+  requireCommandAccess(db, interaction.member, name);
 
   if (name === 'ban') {
     const user = interaction.options.getUser('user');
@@ -1802,7 +2125,7 @@ async function handleUtilitySlash(interaction, db, client) {
   const name = interaction.commandName;
 
   if (!['userinfo', 'snipe', 'first-message'].includes(name)) {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
   }
 
   if (name === 'lock' || name === 'unlock') {
@@ -2072,8 +2395,9 @@ async function handleGiveawaySlash(interaction, db) {
 }
 
 async function handleCaseSlash(interaction, db) {
-  requireModerator(db, interaction.member);
   const sub = interaction.options.getSubcommand();
+  if (sub === 'delete') requireAdmin(db, interaction.member);
+  else requireModerator(db, interaction.member);
   const caseId = interaction.options.getInteger('case_id');
   if (sub === 'delete') {
     db.deleteCase(interaction.guild.id, caseId);
@@ -2141,8 +2465,105 @@ async function handleBoosterRole(interaction, db) {
   await reply(interaction, { embeds: [success(db, interaction.guild.id, `Booster role ready: ${role}.`)] }, true);
 }
 
+function progressRank(db, guildId, userId, type = 'xp') {
+  return typeof db.memberProgressRank === 'function'
+    ? db.memberProgressRank(guildId, userId, type)
+    : null;
+}
+
+function levelCardPayload(db, guild, user, progress) {
+  const rank = progressRank(db, guild.id, user.id, 'xp');
+  const file = new AttachmentBuilder(progression.levelCardBuffer(user, progress, rank), { name: 'level.png' });
+  return {
+    embeds: [
+      buildEmbed(db, guild.id, {
+        title: `${user.username || user.tag} Level`,
+        image: 'attachment://level.png',
+        style: 'royal'
+      })
+    ],
+    files: [file]
+  };
+}
+
+function profileCardPayload(db, guild, user, progress, achievements) {
+  const rank = progressRank(db, guild.id, user.id, 'xp');
+  const file = new AttachmentBuilder(progression.profileCardBuffer(user, progress, achievements, rank), { name: 'profile.png' });
+  const embed = progression.profileEmbed(db, guild, user, progress, achievements);
+  embed.setImage('attachment://profile.png');
+  return {
+    embeds: [embed],
+    files: [file]
+  };
+}
+
 async function handleProgressionSlash(interaction, db) {
   const name = interaction.commandName;
+
+  if (name === 'level') {
+    const sub = interaction.options.getSubcommand();
+    if (sub !== 'show') {
+      requireModerator(db, interaction.member);
+      const user = interaction.options.getUser('user', true);
+      const amount = interaction.options.getInteger('amount') || 0;
+      let progress;
+      if (sub === 'add') {
+        progress = progression.addMemberLevels(db, interaction.guild.id, user.id, amount);
+        const member = interaction.options.getMember('user');
+        if (member) await progression.applyLevelRoles(db, member, progress).catch(() => null);
+        await reply(interaction, { embeds: [success(db, interaction.guild.id, `Added **${amount} level${amount === 1 ? '' : 's'}** to ${user}. New level: **${progress.level}**.`)] }, true);
+        return;
+      }
+      if (sub === 'remove') {
+        progress = progression.removeMemberLevels(db, interaction.guild.id, user.id, amount);
+        await reply(interaction, { embeds: [success(db, interaction.guild.id, `Removed **${amount} level${amount === 1 ? '' : 's'}** from ${user}. New level: **${progress.level}**.`)] }, true);
+        return;
+      }
+      progress = progression.resetMemberLevel(db, interaction.guild.id, user.id);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Reset ${user} to **level ${progress.level}** with **${progress.xp} XP**.`)] }, true);
+      return;
+    }
+
+    const user = interaction.options.getUser('user') || interaction.user;
+    const progress = db.ensureMemberProgress(interaction.guild.id, user.id);
+    await reply(interaction, levelCardPayload(db, interaction.guild, user, progress));
+    return;
+  }
+
+  if (name === 'coins') {
+    const sub = interaction.options.getSubcommand();
+    const user = interaction.options.getUser('user') || interaction.user;
+    if (sub === 'show') {
+      const progress = db.ensureMemberProgress(interaction.guild.id, user.id);
+      await reply(interaction, {
+        embeds: [
+          buildEmbed(db, interaction.guild.id, {
+            title: 'Coins',
+            description: `${user} has **${progress.balance || 0} coins**.`,
+            style: 'amber'
+          })
+        ]
+      });
+      return;
+    }
+
+    requireModerator(db, interaction.member);
+    const target = interaction.options.getUser('user', true);
+    const amount = interaction.options.getInteger('amount') || 0;
+    if (sub === 'add') {
+      const progress = progression.addCoins(db, interaction.guild.id, target.id, amount);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Added **${amount} coins** to ${target}. New balance: **${progress.balance} coins**.`)] }, true);
+      return;
+    }
+    if (sub === 'remove') {
+      const progress = progression.removeCoins(db, interaction.guild.id, target.id, amount);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Removed **${amount} coins** from ${target}. New balance: **${progress.balance} coins**.`)] }, true);
+      return;
+    }
+    const progress = progression.resetCoins(db, interaction.guild.id, target.id);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Reset ${target} to **${progress.balance} coins**.`)] }, true);
+    return;
+  }
 
   if (name === 'daily') {
     const result = progression.claimDaily(db, interaction.guild.id, interaction.user.id);
@@ -2195,24 +2616,11 @@ async function handleProgressionSlash(interaction, db) {
     return;
   }
 
-  if (name === 'level') {
-    await reply(interaction, {
-      embeds: [
-        buildEmbed(db, interaction.guild.id, {
-          title: 'Level',
-          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
-          style: 'royal'
-        })
-      ]
-    });
-    return;
-  }
-
-  await reply(interaction, { embeds: [progression.profileEmbed(db, interaction.guild, user, progress, achievements)] });
+  await reply(interaction, profileCardPayload(db, interaction.guild, user, progress, achievements));
 }
 
 async function handleRoleLevelSlash(interaction, db) {
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'add') {
@@ -2250,6 +2658,342 @@ function colorFromInput(input) {
   if (/^#[0-9a-f]{6}$/i.test(value)) return Number.parseInt(value.slice(1), 16);
   if (/^0x[0-9a-f]{6}$/i.test(value)) return Number.parseInt(value.slice(2), 16);
   return null;
+}
+
+function cleanServerAdminName(value, label, min = 1) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (text.length < min) throw new Error(`${label} is required.`);
+  if (text.length > 100) throw new Error(`${label} must be 100 characters or less.`);
+  return text;
+}
+
+function cleanServerAdminText(value, max = 1024) {
+  const text = String(value || '').trim();
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+function requireBotGuildPermission(guild, permission, label) {
+  if (!guild.members.me?.permissions?.has(permission)) {
+    throw new Error(`I need ${label} permission for this action.`);
+  }
+}
+
+function channelTypeFromInput(value) {
+  const key = String(value || 'text').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(CHANNEL_ADMIN_TYPES, key)) {
+    throw new Error('Channel type must be text, voice, announcement, forum, or stage.');
+  }
+  return CHANNEL_ADMIN_TYPES[key];
+}
+
+function resolveDashboardChannel(guild, value) {
+  const id = idFromMention(value);
+  const channel = id ? guild.channels.cache.get(id) : null;
+  if (!channel || !CHANNEL_ADMIN_CHANNEL_TYPES.includes(channel.type)) throw new Error('Channel not found.');
+  return channel;
+}
+
+function resolveDashboardCategory(guild, value) {
+  const id = idFromMention(value);
+  const category = id ? guild.channels.cache.get(id) : null;
+  if (!category || category.type !== ChannelType.GuildCategory) throw new Error('Category not found.');
+  return category;
+}
+
+function resolveEditableRole(guild, value) {
+  const id = idFromMention(value);
+  const role = id ? guild.roles.cache.get(id) : null;
+  if (!role || role.id === guild.id) throw new Error('Role not found.');
+  if (role.managed) throw new Error('Managed roles can not be edited.');
+  if (role.editable === false) throw new Error('Move the bot role above that role before editing it.');
+  return role;
+}
+
+function boolFromOption(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on', 'enable', 'enabled', 'confirm'].includes(String(value).toLowerCase());
+}
+
+function lockStateFromValue(value) {
+  const state = String(value || 'keep').toLowerCase();
+  if (['lock', 'locked'].includes(state)) return 'lock';
+  if (['unlock', 'unlocked'].includes(state)) return 'unlock';
+  return 'keep';
+}
+
+async function applyChannelCreate(guild, data) {
+  requireBotGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+  const type = channelTypeFromInput(data.type);
+  const options = {
+    name: cleanServerAdminName(data.name, 'Channel name'),
+    type,
+    reason: data.reason || 'Server admin command'
+  };
+  if (data.categoryId) options.parent = resolveDashboardCategory(guild, data.categoryId).id;
+  const topic = cleanServerAdminText(data.topic);
+  if (topic && [ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum].includes(type)) options.topic = topic;
+  const slowmode = Math.max(0, Math.min(21600, Number.parseInt(data.slowmode, 10) || 0));
+  if ([ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(type)) options.rateLimitPerUser = slowmode;
+  return guild.channels.create(options);
+}
+
+async function applyChannelUpdate(guild, channel, data) {
+  requireBotGuildPermission(guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+  const changes = [];
+  if (data.name) {
+    await channel.setName(cleanServerAdminName(data.name, 'Channel name'), 'Server admin command');
+    changes.push('name');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'categoryId')) {
+    const categoryId = data.categoryId ? resolveDashboardCategory(guild, data.categoryId).id : null;
+    await channel.setParent(categoryId, { lockPermissions: false, reason: 'Server admin command' });
+    changes.push('category');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'topic') && typeof channel.setTopic === 'function') {
+    await channel.setTopic(cleanServerAdminText(data.topic), 'Server admin command');
+    changes.push('topic');
+  }
+  if (Object.prototype.hasOwnProperty.call(data, 'slowmode') && typeof channel.setRateLimitPerUser === 'function') {
+    const seconds = Math.max(0, Math.min(21600, Number.parseInt(data.slowmode, 10) || 0));
+    await channel.setRateLimitPerUser(seconds, 'Server admin command');
+    changes.push('slowmode');
+  }
+  const lockState = lockStateFromValue(data.lockState);
+  if (lockState !== 'keep') {
+    await channel.permissionOverwrites.edit(guild.id, { SendMessages: lockState === 'lock' ? false : null }, { reason: 'Server admin command' });
+    changes.push(lockState);
+  }
+  return changes;
+}
+
+async function handleServerAdminSlash(interaction, db) {
+  const name = interaction.commandName;
+  requireCommandAccess(db, interaction.member, name);
+
+  if (name === 'channel-create') {
+    const channel = await applyChannelCreate(interaction.guild, {
+      type: interaction.options.getString('type'),
+      name: interaction.options.getString('name'),
+      categoryId: interaction.options.getChannel('category')?.id || null,
+      topic: interaction.options.getString('topic') || '',
+      slowmode: interaction.options.getInteger('slowmode') || 0
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-rename') {
+    const channel = interaction.options.getChannel('channel');
+    await applyChannelUpdate(interaction.guild, channel, { name: interaction.options.getString('name') });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed channel to ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-delete') {
+    const channel = interaction.options.getChannel('channel');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this channel.');
+    const nameBefore = channel.name;
+    await channel.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted #${nameBefore}.`)] }, true);
+    return;
+  }
+
+  if (name === 'channel-update') {
+    const channel = interaction.options.getChannel('channel');
+    const data = {
+      lockState: interaction.options.getString('send_messages') || 'keep'
+    };
+    const category = interaction.options.getChannel('category');
+    if (category) data.categoryId = category.id;
+    if (interaction.options.getString('topic') !== null) data.topic = interaction.options.getString('topic') || '';
+    if (interaction.options.getInteger('slowmode') !== null) data.slowmode = interaction.options.getInteger('slowmode');
+    const changes = await applyChannelUpdate(interaction.guild, channel, data);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, changes.length ? `Updated ${channel}: ${changes.join(', ')}.` : `No changes applied to ${channel}.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-create') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = await interaction.guild.channels.create({
+      name: cleanServerAdminName(interaction.options.getString('name'), 'Category name'),
+      type: ChannelType.GuildCategory,
+      reason: 'Server admin command'
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created category **${category.name}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = interaction.options.getChannel('category');
+    await category.setName(cleanServerAdminName(interaction.options.getString('name'), 'Category name'), 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed category to **${category.name}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'category-delete') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = interaction.options.getChannel('category');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this category.');
+    const nameBefore = category.name;
+    await category.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted category **${nameBefore}**.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-create') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = await interaction.guild.roles.create({
+      name: cleanServerAdminName(interaction.options.getString('name'), 'Role name'),
+      color: colorFromInput(interaction.options.getString('color')) || undefined,
+      hoist: Boolean(interaction.options.getBoolean('display')),
+      mentionable: Boolean(interaction.options.getBoolean('mentionable')),
+      reason: 'Server admin command'
+    });
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Created role ${role}.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(interaction.guild, interaction.options.getRole('role')?.id);
+    await role.setName(cleanServerAdminName(interaction.options.getString('name'), 'Role name'), 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed role to ${role}.`)] }, true);
+    return;
+  }
+
+  if (name === 'role-delete') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(interaction.guild, interaction.options.getRole('role')?.id);
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to delete this role.');
+    const nameBefore = role.name;
+    await role.delete('Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Deleted role @${nameBefore}.`)] }, true);
+    return;
+  }
+
+  if (name === 'server-rename') {
+    requireBotGuildPermission(interaction.guild, PermissionsBitField.Flags.ManageGuild, 'Manage Server');
+    if (!interaction.options.getBoolean('confirm')) throw new Error('Set confirm to true to rename this server.');
+    const nextName = cleanServerAdminName(interaction.options.getString('name'), 'Server name', 2);
+    await interaction.guild.setName(nextName, 'Server admin command');
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Renamed server to **${nextName}**.`)] }, true);
+  }
+}
+
+async function handleServerAdminPrefix(message, db, command, args) {
+  requireCommandAccess(db, message.member, command);
+  const { options, rest } = parseKeyValueOptions(args);
+
+  if (command === 'channel-create') {
+    const channel = await applyChannelCreate(message.guild, {
+      type: rest.shift() || optionValue(options, ['type']),
+      name: optionValue(options, ['name']) || rest.join(' '),
+      categoryId: optionValue(options, ['category', 'parent']),
+      topic: optionValue(options, ['topic']),
+      slowmode: optionValue(options, ['slowmode', 'rateLimit'])
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'channel-rename') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    await applyChannelUpdate(message.guild, channel, { name: optionValue(options, ['name']) || rest.join(' ') });
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed channel to ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'channel-delete') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this channel.');
+    const nameBefore = channel.name;
+    await channel.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted #${nameBefore}.`)] });
+    return;
+  }
+
+  if (command === 'channel-update') {
+    const channel = resolveDashboardChannel(message.guild, rest.shift());
+    const data = {
+      categoryId: optionValue(options, ['category', 'parent']),
+      topic: optionValue(options, ['topic']),
+      slowmode: optionValue(options, ['slowmode', 'rateLimit']),
+      lockState: optionValue(options, ['lock', 'sendMessages', 'send'])
+    };
+    for (const key of Object.keys(data)) if (data[key] === null) delete data[key];
+    const changes = await applyChannelUpdate(message.guild, channel, data);
+    await message.reply({ embeds: [success(db, message.guild.id, changes.length ? `Updated ${channel}: ${changes.join(', ')}.` : `No changes applied to ${channel}.`)] });
+    return;
+  }
+
+  if (command === 'category-create') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = await message.guild.channels.create({
+      name: cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Category name'),
+      type: ChannelType.GuildCategory,
+      reason: 'Server admin command'
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created category **${category.name}**.`)] });
+    return;
+  }
+
+  if (command === 'category-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = resolveDashboardCategory(message.guild, rest.shift());
+    await category.setName(cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Category name'), 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed category to **${category.name}**.`)] });
+    return;
+  }
+
+  if (command === 'category-delete') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageChannels, 'Manage Channels');
+    const category = resolveDashboardCategory(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this category.');
+    const nameBefore = category.name;
+    await category.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted category **${nameBefore}**.`)] });
+    return;
+  }
+
+  if (command === 'role-create') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = await message.guild.roles.create({
+      name: cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Role name'),
+      color: colorFromInput(optionValue(options, ['color'])) || undefined,
+      hoist: boolFromOption(optionValue(options, ['display', 'hoist'])),
+      mentionable: boolFromOption(optionValue(options, ['mentionable'])),
+      reason: 'Server admin command'
+    });
+    await message.reply({ embeds: [success(db, message.guild.id, `Created role ${role}.`)] });
+    return;
+  }
+
+  if (command === 'role-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(message.guild, rest.shift());
+    await role.setName(cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Role name'), 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed role to ${role}.`)] });
+    return;
+  }
+
+  if (command === 'role-delete') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+    const role = resolveEditableRole(message.guild, rest.shift());
+    if (!boolFromOption(optionValue(options, ['confirm']) || rest[0])) throw new Error('Add `confirm=true` to delete this role.');
+    const nameBefore = role.name;
+    await role.delete('Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Deleted role @${nameBefore}.`)] });
+    return;
+  }
+
+  if (command === 'server-rename') {
+    requireBotGuildPermission(message.guild, PermissionsBitField.Flags.ManageGuild, 'Manage Server');
+    if (!boolFromOption(optionValue(options, ['confirm']))) throw new Error('Add `confirm=true` to rename this server.');
+    const nextName = cleanServerAdminName(optionValue(options, ['name']) || rest.join(' '), 'Server name', 2);
+    await message.guild.setName(nextName, 'Server admin command');
+    await message.reply({ embeds: [success(db, message.guild.id, `Renamed server to **${nextName}**.`)] });
+  }
 }
 
 function embedOptionsFromAI(generated) {
@@ -2430,7 +3174,7 @@ async function handleInvitesPrefix(message, db, client, args) {
 }
 
 async function handleInviteRoleSlash(interaction, db) {
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'add') {
@@ -2471,7 +3215,7 @@ async function handleInviteRoleSlash(interaction, db) {
 }
 
 async function handleInviteRolePrefix(message, db, args) {
-  requireModerator(db, message.member);
+  requireAdmin(db, message.member);
   const sub = String(args.shift() || 'list').toLowerCase();
 
   if (sub === 'add' || sub === 'set') {
@@ -2598,7 +3342,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'verification') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     const sub = interaction.options.getSubcommand();
     if (sub === 'setup') {
       await community.sendVerificationPanel(db, interaction, {
@@ -2625,7 +3369,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'channel-restriction') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     await interaction.deferReply({ ephemeral: true });
     const result = await community.applyChannelRestriction(db, interaction.guild, channelIdsFromText(interaction.options.getString('except')));
     await interaction.editReply({
@@ -2635,7 +3379,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'mass-sync-categories') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     await interaction.deferReply({ ephemeral: true });
     const result = await community.massSyncCategoryPermissions(interaction.guild);
     await interaction.editReply({
@@ -2663,6 +3407,23 @@ async function handleCommunitySlash(interaction, db) {
   if (name === 'pet') {
     const sub = interaction.options.getSubcommand();
     let pet;
+    if (sub === 'reset') {
+      const target = interaction.options.getUser('user') || interaction.user;
+      if (target.id !== interaction.user.id) requireModerator(db, interaction.member);
+      const hadPet = community.resetPet(db, interaction.guild.id, target.id);
+      await reply(interaction, {
+        embeds: [
+          success(
+            db,
+            interaction.guild.id,
+            hadPet
+              ? `${target}'s digital pet has been reset.`
+              : `${target} did not have a digital pet saved.`
+          )
+        ]
+      }, target.id !== interaction.user.id);
+      return;
+    }
     if (sub === 'adopt') {
       const result = community.adoptPet(db, interaction.guild.id, interaction.user.id, interaction.options.getString('name'));
       pet = result.pet;
@@ -2735,7 +3496,8 @@ const HELP_SECTIONS = [
     lines: [
       '`restrict`, `unrestrict`, `ban`, `kick`, `mute`, `unmute`, `warn`, `unwarn`, `warnings`',
       '`purge`, `slowmode`, `softban`, `mass-ban`, `ban-list`, `case`, `note`',
-      '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`'
+      '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`',
+      '`channel-create`, `channel-rename`, `channel-delete`, `channel-update`, `category-create`, `category-rename`, `category-delete`'
     ]
   },
   {
@@ -2753,7 +3515,9 @@ const HELP_SECTIONS = [
     label: 'Roles & Levels',
     lines: [
       '`give-role`, `remove-role`, `temp-role`, `temp-role-remove`, `temp-role-list`',
-      '`booster-role`, `role-level`, `daily`, `balance`, `profile`, `level`, `leaderboard`'
+      '`role-create`, `role-rename`, `role-delete`, `server-rename`',
+      '`booster-role`, `role-level`, `daily`, `balance`, `coins`, `profile`, `level`, `leaderboard`',
+      '`level add/remove/reset @user amount`, `coins add/remove/reset @user amount`'
     ]
   },
   {
@@ -2761,8 +3525,9 @@ const HELP_SECTIONS = [
     label: 'Fun & Pet',
     lines: [
       '`game tictactoe/coinflip/dice/rps/8ball/slots/trivia/roulette/scramble`',
-      '`pet adopt [name]`, `pet feed`, `pet play`, `pet status`',
-      '`swat help` for case files, SWAT database, episode guessing, and season awards.'
+      '`pet adopt [name]`, `pet feed`, `pet play`, `pet status`, `pet reset`',
+      '`swat help` for case files, SWAT database, episode guessing, and season awards.',
+      '`swat name case template` or `/swat-name set` changes SWAT channel names.'
     ]
   },
   {
@@ -3391,6 +4156,59 @@ async function handleOwnerPrefix(message, db, client, command, args) {
 }
 
 async function handleProgressionPrefix(message, db, client, command, args) {
+  const sub = String(args[0] || '').toLowerCase();
+
+  if (command === 'level' && ['add', 'remove', 'reset'].includes(sub)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const userRaw = args.shift();
+    const user = userRaw ? await resolveUser(client, message.guild, userRaw) : null;
+    if (!user) throw new Error('Usage: r!level add|remove|reset @user [amount]');
+    const amount = Number(args.shift() || 0);
+    let progress;
+    if (sub === 'add') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!level add @user amount');
+      progress = progression.addMemberLevels(db, message.guild.id, user.id, amount);
+      const member = await message.guild.members.fetch(user.id).catch(() => null);
+      if (member) await progression.applyLevelRoles(db, member, progress).catch(() => null);
+      await message.reply({ embeds: [success(db, message.guild.id, `Added **${amount} level${amount === 1 ? '' : 's'}** to ${user}. New level: **${progress.level}**.`)] });
+      return;
+    }
+    if (sub === 'remove') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!level remove @user amount');
+      progress = progression.removeMemberLevels(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Removed **${amount} level${amount === 1 ? '' : 's'}** from ${user}. New level: **${progress.level}**.`)] });
+      return;
+    }
+    progress = progression.resetMemberLevel(db, message.guild.id, user.id);
+    await message.reply({ embeds: [success(db, message.guild.id, `Reset ${user} to **level ${progress.level}** with **${progress.xp} XP**.`)] });
+    return;
+  }
+
+  if (command === 'coins' && ['add', 'remove', 'reset'].includes(sub)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const userRaw = args.shift();
+    const user = userRaw ? await resolveUser(client, message.guild, userRaw) : null;
+    if (!user) throw new Error('Usage: r!coins add|remove|reset @user [amount]');
+    const amount = Number(args.shift() || 0);
+    if (sub === 'add') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!coins add @user amount');
+      const progress = progression.addCoins(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Added **${amount} coins** to ${user}. New balance: **${progress.balance} coins**.`)] });
+      return;
+    }
+    if (sub === 'remove') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!coins remove @user amount');
+      const progress = progression.removeCoins(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Removed **${amount} coins** from ${user}. New balance: **${progress.balance} coins**.`)] });
+      return;
+    }
+    const progress = progression.resetCoins(db, message.guild.id, user.id);
+    await message.reply({ embeds: [success(db, message.guild.id, `Reset ${user} to **${progress.balance} coins**.`)] });
+    return;
+  }
+
   if (command === 'daily') {
     const result = progression.claimDaily(db, message.guild.id, message.author.id);
     if (!result.claimed) {
@@ -3430,11 +4248,11 @@ async function handleProgressionPrefix(message, db, client, command, args) {
   const progress = db.ensureMemberProgress(message.guild.id, user.id);
   const achievements = db.listAchievements(message.guild.id, user.id);
 
-  if (command === 'balance') {
+  if (command === 'balance' || command === 'coins') {
     await message.reply({
       embeds: [
         buildEmbed(db, message.guild.id, {
-          title: 'Balance',
+          title: command === 'coins' ? 'Coins' : 'Balance',
           description: `${user} has **${progress.balance || 0} coins**.`,
           style: 'amber'
         })
@@ -3444,19 +4262,11 @@ async function handleProgressionPrefix(message, db, client, command, args) {
   }
 
   if (command === 'level') {
-    await message.reply({
-      embeds: [
-        buildEmbed(db, message.guild.id, {
-          title: 'Level',
-          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
-          style: 'royal'
-        })
-      ]
-    });
+    await message.reply(levelCardPayload(db, message.guild, user, progress));
     return;
   }
 
-  await message.reply({ embeds: [progression.profileEmbed(db, message.guild, user, progress, achievements)] });
+  await message.reply(profileCardPayload(db, message.guild, user, progress, achievements));
 }
 
 async function handleRoleLevelPrefix(message, db, args) {
@@ -3571,7 +4381,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
   if (command === 'setup') {
-    requireModerator(db, message.member);
+    requireAdmin(db, message.member);
     await message.reply(setupHomePayload(db, message.guild.id));
     return;
   }
@@ -3591,19 +4401,19 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
 
-  if (['balance', 'daily', 'profile', 'level', 'leaderboard'].includes(command)) {
+  if (['balance', 'coins', 'daily', 'profile', 'level', 'leaderboard'].includes(command)) {
     await handleProgressionPrefix(message, db, client, command, args);
     return;
   }
 
   if (command === 'role-level') {
-    requireModerator(db, message.member);
+    requireAdmin(db, message.member);
     await handleRoleLevelPrefix(message, db, args);
     return;
   }
 
   if (command === 'verification') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const sub = String(args.shift() || 'status').toLowerCase();
     if (sub === 'setup') {
       const channelId = idFromMention(args.shift());
@@ -3631,7 +4441,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
   }
 
   if (command === 'channel-restriction') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const result = await community.applyChannelRestriction(db, message.guild, channelIdsFromText(args.join(' ')));
     await message.reply({
       embeds: [success(db, message.guild.id, `Restriction visibility synced. Updated ${result.updated} channels, skipped ${result.skipped}. Exempt: ${result.exempt.length || 0}.`)]
@@ -3640,7 +4450,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
   }
 
   if (command === 'mass-sync-categories') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const result = await community.massSyncCategoryPermissions(message.guild);
     await message.reply({ embeds: [success(db, message.guild.id, `Synced ${result.synced} channels with their categories. Skipped ${result.skipped}.`)] });
     return;
@@ -3661,6 +4471,25 @@ async function handlePrefixCommand(message, db, client, command, args) {
   if (command === 'pet') {
     const sub = String(args.shift() || 'status').toLowerCase();
     let pet;
+    if (sub === 'reset') {
+      const targetRaw = args[0];
+      const target = targetRaw ? await resolveUser(client, message.guild, targetRaw) : message.author;
+      if (!target) throw new Error('User not found.');
+      if (target.id !== message.author.id) requireModerator(db, message.member);
+      const hadPet = community.resetPet(db, message.guild.id, target.id);
+      await message.reply({
+        embeds: [
+          success(
+            db,
+            message.guild.id,
+            hadPet
+              ? `${target}'s digital pet has been reset.`
+              : `${target} did not have a digital pet saved.`
+          )
+        ]
+      });
+      return;
+    }
     if (sub === 'adopt') {
       const result = community.adoptPet(db, message.guild.id, message.author.id, args.join(' '));
       pet = result.pet;
@@ -3718,6 +4547,11 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
 
+  if (SERVER_ADMIN_COMMANDS.has(command)) {
+    await handleServerAdminPrefix(message, db, command, args);
+    return;
+  }
+
   if (command === 'restrict') {
     requireRestrict(db, message.member);
     const member = await resolveMember(message.guild, args.shift());
@@ -3751,7 +4585,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     'temp-role', 'temp-role-remove', 'temp-role-list', 'set-nick', 'remind', 'move',
     'mass-ban', 'case', 'ban-list', 'giveaway', 'steal-emoji', 'steal-sticker'
   ]);
-  if (modCommands.has(command)) requireModerator(db, message.member);
+  if (modCommands.has(command)) requireCommandAccess(db, message.member, command);
 
   if (command === 'ban') {
     const user = await resolveUser(client, message.guild, args.shift());
@@ -4060,6 +4894,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     const sub = args.shift();
     const caseId = Number(args.shift());
     if (sub === 'delete') {
+      requireAdmin(db, message.member);
       db.deleteCase(message.guild.id, caseId);
       await message.reply({ embeds: [success(db, message.guild.id, `Case #${caseId} deleted.`)] });
       return;

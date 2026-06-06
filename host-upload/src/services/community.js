@@ -180,8 +180,10 @@ async function runBump(db, guild, channel, user) {
   db.setState(guild.id, 'bump_last_at', Date.now());
   db.setState(guild.id, 'bump_last_user', user.id);
   const targetId = db.getConfig(guild.id, 'bump_channel') || channel.id;
+  const pingRoleId = db.getConfig(guild.id, 'bump_ping_role');
   const target = await guild.channels.fetch(targetId).catch(() => null) || channel;
   await target.send({
+    content: pingRoleId ? `<@&${pingRoleId}>` : undefined,
     embeds: [
       buildEmbed(db, guild.id, {
         title: 'Server Bump',
@@ -189,11 +191,12 @@ async function runBump(db, guild, channel, user) {
         style: 'royal'
       })
     ],
-    allowedMentions: { parse: [], users: [], roles: [] }
+    allowedMentions: { parse: [], users: [], roles: pingRoleId ? [pingRoleId] : [] }
   });
   return {
     bumped: true,
-    nextAt: Date.now() + cooldownMs
+    nextAt: Date.now() + cooldownMs,
+    pingRoleId
   };
 }
 
@@ -231,6 +234,12 @@ function playPet(db, guildId, userId) {
   return next;
 }
 
+function resetPet(db, guildId, userId) {
+  const existing = petStatus(db, guildId, userId);
+  db.setState(guildId, petKey(userId), null);
+  return Boolean(existing);
+}
+
 module.exports = {
   adoptPet,
   applyChannelRestriction,
@@ -240,6 +249,7 @@ module.exports = {
   petStatus,
   petStatusText,
   playPet,
+  resetPet,
   runBump,
   sendVerificationPanel
 };

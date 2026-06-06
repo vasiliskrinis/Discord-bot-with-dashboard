@@ -17,10 +17,17 @@ const DEFAULT_GUILD_CONFIG = {
   verification_message: 'Press the button below to verify and unlock the server.',
   restriction_exempt_channels: [],
   bump_channel: null,
+  bump_ping_role: null,
   bump_cooldown_minutes: 120,
   qna_channel: null,
   qna_personality: 'Accurate, friendly, and concise. Answer only when you are confident, and ask for details when needed.',
   swat_guess_role: null,
+  swat_case_channel_name: '📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲',
+  swat_game_channel_name: '📺┃𝗦𝘄𝗮𝘁 𝗚𝗮𝗺𝗲',
+  swat_guess_channel_name: '📺┃𝗦𝘄𝗮𝘁 𝗚𝘂𝗲𝘀𝘀',
+  swat_case_category: null,
+  swat_game_category: null,
+  swat_guess_category: null,
   auto_role: null,
   counting_channel: null,
   welcome_channel: null,
@@ -32,6 +39,8 @@ const DEFAULT_GUILD_CONFIG = {
   embed_style: 'sapphire',
   admin_users: [],
   admin_roles: [],
+  moderator_users: [],
+  moderator_roles: [],
   authorized_roles: [],
   ai_moderation_enabled: true,
   anti_raid_enabled: true,
@@ -269,6 +278,35 @@ class BotDatabase {
         created_at INTEGER NOT NULL,
         PRIMARY KEY (guild_id, panel_id)
       );
+
+      CREATE TABLE IF NOT EXISTS role_reaction_panels (
+        guild_id TEXT NOT NULL,
+        panel_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        title TEXT,
+        description TEXT,
+        content TEXT,
+        source TEXT NOT NULL DEFAULT 'bot',
+        remove_on_unreact INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, panel_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS role_reaction_options (
+        guild_id TEXT NOT NULL,
+        panel_id TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        emoji_key TEXT NOT NULL,
+        role_id TEXT NOT NULL,
+        label TEXT,
+        position INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, panel_id, emoji_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_role_reaction_message
+        ON role_reaction_panels (guild_id, channel_id, message_id);
 
       CREATE TABLE IF NOT EXISTS tickets (
         guild_id TEXT NOT NULL,
@@ -869,6 +907,16 @@ class BotDatabase {
       .get(guildId, userId) || null;
   }
 
+  memberProgressRank(guildId, userId, sort = 'xp') {
+    const current = this.ensureMemberProgress(guildId, userId);
+    const column = sort === 'balance' ? 'balance' : 'xp';
+    const value = Number(current[column] || 0);
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS count FROM member_progress WHERE guild_id = ? AND ${column} > ?`)
+      .get(guildId, value);
+    return Number(row?.count || 0) + 1;
+  }
+
   addMemberProgress(guildId, userId, updates = {}) {
     const current = this.ensureMemberProgress(guildId, userId);
     const next = {
@@ -1154,6 +1202,90 @@ class BotDatabase {
     return this.db
       .prepare('SELECT * FROM ticket_panels WHERE guild_id = ? ORDER BY created_at DESC')
       .all(guildId);
+  }
+
+  saveRoleReactionPanel(guildId, panel, options = []) {
+    this.db.exec('BEGIN;');
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO role_reaction_panels
+           (
+            guild_id, panel_id, channel_id, message_id, title, description, content,
+            source, remove_on_unreact, created_by, created_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(guild_id, panel_id) DO UPDATE SET
+            channel_id = excluded.channel_id,
+            message_id = excluded.message_id,
+            title = excluded.title,
+            description = excluded.description,
+            content = excluded.content,
+            source = excluded.source,
+            remove_on_unreact = excluded.remove_on_unreact`
+        )
+        .run(
+          guildId,
+          panel.panelId,
+          panel.channelId,
+          panel.messageId,
+          panel.title || null,
+          panel.description || null,
+          panel.content || null,
+          panel.source || 'bot',
+          panel.removeOnUnreact === false ? 0 : 1,
+          panel.createdBy || null,
+          panel.createdAt || now()
+        );
+
+      this.db
+        .prepare('DELETE FROM role_reaction_options WHERE guild_id = ? AND panel_id = ?')
+        .run(guildId, panel.panelId);
+      const insert = this.db.prepare(
+        `INSERT INTO role_reaction_options
+         (guild_id, panel_id, emoji, emoji_key, role_id, label, position)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      options.forEach((option, index) => {
+        insert.run(
+          guildId,
+          panel.panelId,
+          option.emoji,
+          option.emojiKey,
+          option.roleId,
+          option.label || null,
+          Number.isFinite(option.position) ? option.position : index
+        );
+      });
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      this.db.exec('ROLLBACK;');
+      throw err;
+    }
+  }
+
+  getRoleReactionPanel(guildId, panelId) {
+    return this.db
+      .prepare('SELECT * FROM role_reaction_panels WHERE guild_id = ? AND panel_id = ?')
+      .get(guildId, panelId);
+  }
+
+  getRoleReactionPanelByMessage(guildId, channelId, messageId) {
+    return this.db
+      .prepare('SELECT * FROM role_reaction_panels WHERE guild_id = ? AND channel_id = ? AND message_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(guildId, channelId, messageId);
+  }
+
+  listRoleReactionPanels(guildId) {
+    return this.db
+      .prepare('SELECT * FROM role_reaction_panels WHERE guild_id = ? ORDER BY created_at DESC')
+      .all(guildId);
+  }
+
+  listRoleReactionOptions(guildId, panelId) {
+    return this.db
+      .prepare('SELECT * FROM role_reaction_options WHERE guild_id = ? AND panel_id = ? ORDER BY position ASC, emoji ASC')
+      .all(guildId, panelId);
   }
 
   saveTicket(guildId, panelId, userId, channelId, status = 'open') {

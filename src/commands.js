@@ -101,7 +101,7 @@ const SETUP_CHANNELS = [
   {
     key: 'achievement_channel',
     label: 'Achievement Channel',
-    description: 'Achievement unlock announcements.',
+    description: 'Achievement unlock announcement channel.',
     types: [ChannelType.GuildText]
   },
   {
@@ -135,14 +135,19 @@ const SETUP_SINGLE_ROLES = [
     description: 'Role pinged for Roblox/executor updates.'
   },
   {
+    key: 'bump_ping_role',
+    label: 'Bump Ping Role',
+    description: 'Role pinged when members bump the server.'
+  },
+  {
     key: 'verified_role',
     label: 'Verified Role',
     description: 'Role given when a member verifies.'
   },
   {
     key: 'swat_guess_role',
-    label: 'SWAT Guess Reward',
-    description: 'Role given to first correct episode guesser.'
+    label: 'SWAT Winner Reward',
+    description: 'Role given to first correct SWAT case or game winner.'
   },
   {
     key: 'auto_role',
@@ -155,13 +160,25 @@ const SETUP_LISTS = [
   {
     key: 'admin_users',
     label: 'Admin Users',
-    description: 'Users allowed to use bot admin/mod setup.',
+    description: 'Users allowed to use every bot command and setup.',
     type: 'user'
   },
   {
     key: 'admin_roles',
     label: 'Admin Roles',
-    description: 'Roles allowed to use bot admin/mod setup.',
+    description: 'Roles allowed to use every bot command and setup.',
+    type: 'role'
+  },
+  {
+    key: 'moderator_users',
+    label: 'Moderator Users',
+    description: 'Users allowed to use moderation commands except dangerous ones.',
+    type: 'user'
+  },
+  {
+    key: 'moderator_roles',
+    label: 'Moderator Roles',
+    description: 'Roles allowed to use moderation commands except dangerous ones.',
     type: 'role'
   },
   {
@@ -226,7 +243,7 @@ const PREFIX_ALIASES = {
   embedcreate: 'embed-create',
   boosterrole: 'booster-role',
   bal: 'balance',
-  coins: 'balance',
+  coins: 'coins',
   economy: 'profile',
   rank: 'level',
   levels: 'leaderboard',
@@ -355,6 +372,44 @@ const SERVER_ADMIN_COMMANDS = new Set([
   'role-delete',
   'server-rename'
 ]);
+
+const DANGEROUS_COMMANDS = new Set([
+  'ban',
+  'unban',
+  'kick',
+  'softban',
+  'mass-ban',
+  'lockdown',
+  'unlockdown',
+  'give-role',
+  'remove-role',
+  'temp-role',
+  'temp-role-remove',
+  'channel-create',
+  'channel-rename',
+  'channel-delete',
+  'channel-update',
+  'category-create',
+  'category-rename',
+  'category-delete',
+  'role-create',
+  'role-rename',
+  'role-delete',
+  'server-rename',
+  'invite-role',
+  'role-invites',
+  'role-level',
+  'verification',
+  'channel-restriction',
+  'mass-sync-categories',
+  'setup',
+  'swat-name'
+]);
+
+function requireCommandAccess(db, member, command) {
+  if (DANGEROUS_COMMANDS.has(command)) requireAdmin(db, member);
+  else requireModerator(db, member);
+}
 
 function serverAdminSlashCommands() {
   const channelOption = (option) => option
@@ -771,8 +826,63 @@ function slashCommands() {
 
     new SlashCommandBuilder()
       .setName('level')
-      .setDescription('Show a member level.')
-      .addUserOption((option) => option.setName('user').setDescription('Member.')),
+      .setDescription('Show or manage member levels.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show a member level card.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.'))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Add levels to a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many levels to add.').setRequired(true).setMinValue(1).setMaxValue(500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove levels from a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many levels to remove.').setRequired(true).setMinValue(1).setMaxValue(500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset a member level and XP.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('coins')
+      .setDescription('Show or manage member coins.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show a member coin balance.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.'))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('add')
+          .setDescription('Add coins to a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many coins to add.').setRequired(true).setMinValue(1).setMaxValue(100000000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('remove')
+          .setDescription('Remove coins from a member.')
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+          .addIntegerOption((option) => option.setName('amount').setDescription('How many coins to remove.').setRequired(true).setMinValue(1).setMaxValue(100000000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription("Reset a member's coins to zero.")
+          .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+      ),
 
     new SlashCommandBuilder()
       .setName('leaderboard')
@@ -843,7 +953,13 @@ function slashCommands() {
       )
       .addSubcommand((sub) => sub.setName('feed').setDescription('Feed your digital pet.'))
       .addSubcommand((sub) => sub.setName('play').setDescription('Play with your digital pet.'))
-      .addSubcommand((sub) => sub.setName('status').setDescription('Show your digital pet.')),
+      .addSubcommand((sub) => sub.setName('status').setDescription('Show your digital pet.'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset your digital pet.')
+          .addUserOption((option) => option.setName('user').setDescription('Moderator only: pet owner to reset.'))
+      ),
 
     new SlashCommandBuilder()
       .setName('qna')
@@ -856,6 +972,37 @@ function slashCommands() {
           .addStringOption((option) => option.setName('personality').setDescription('How the bot should answer in Q&A.').setRequired(true))
       )
       .addSubcommand((sub) => sub.setName('status').setDescription('Show Q&A settings.')),
+
+    new SlashCommandBuilder()
+      .setName('swat-name')
+      .setDescription('Configure SWAT channel name templates.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('show')
+          .setDescription('Show the current SWAT channel name templates.')
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('set')
+          .setDescription('Set a SWAT channel name template.')
+          .addStringOption((option) => option.setName('kind').setDescription('Which SWAT channel name to edit.').setRequired(true).addChoices(
+            { name: 'Case', value: 'case' },
+            { name: 'Game', value: 'game' },
+            { name: 'Guess', value: 'guess' }
+          ))
+          .addStringOption((option) => option.setName('template').setDescription('Example: 📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲 or {game}.').setRequired(true).setMaxLength(100))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('reset')
+          .setDescription('Reset a SWAT channel name template.')
+          .addStringOption((option) => option.setName('kind').setDescription('Which template to reset.').setRequired(true).addChoices(
+            { name: 'Case', value: 'case' },
+            { name: 'Game', value: 'game' },
+            { name: 'Guess', value: 'guess' },
+            { name: 'All', value: 'all' }
+          ))
+      ),
 
     new SlashCommandBuilder()
       .setName('invite-role')
@@ -878,7 +1025,6 @@ function slashCommands() {
     new SlashCommandBuilder()
       .setName('role-invites')
       .setDescription('Give inviters a role when they reach an invite count.')
-      .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
       .addIntegerOption((option) => option.setName('invites').setDescription('Invite count required.').setRequired(true).setMinValue(1).setMaxValue(1000000))
       .addRoleOption((option) => option.setName('role').setDescription('Role to give when that invite count is reached.').setRequired(true)),
 
@@ -1092,7 +1238,7 @@ function setupSectionRow() {
       .addOptions(
         { label: 'Channels', value: 'channels', description: 'Logs, restrict, updates, counting, welcome.' },
         { label: 'Roles', value: 'roles', description: 'Restrict role, restrict perms, update ping.' },
-        { label: 'Admins & Access', value: 'access', description: 'Admin users, admin roles, review roles.' },
+        { label: 'Admins & Access', value: 'access', description: 'Admin users, moderator users/roles, review roles.' },
         { label: 'Embed Style', value: 'style', description: 'Change the embed style used by the bot.' },
         { label: 'Messages & Tickets', value: 'text', description: 'Welcome message, sticky message, ticket panel.' },
         { label: 'Clear Settings', value: 'clear', description: 'Clear channels, roles, access lists, welcome, or sticky.' },
@@ -1345,7 +1491,7 @@ async function clearSetupSetting(db, interaction, key) {
 
 async function handleSetupInteraction(db, interaction) {
   ensureGuild(interaction);
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   db.ensureGuildConfig(interaction.guild.id);
 
   if (interaction.isButton() && interaction.customId === 'setup:home') {
@@ -1592,7 +1738,7 @@ async function handleSlash(interaction, db, client) {
     assertNormalCommandUnlocked(db, name);
     switch (name) {
       case 'setup': {
-        requireModerator(db, interaction.member);
+        requireAdmin(db, interaction.member);
         await reply(interaction, setupHomePayload(db, interaction.guild.id), true);
         break;
       }
@@ -1794,6 +1940,7 @@ async function handleSlash(interaction, db, client) {
       }
 
       case 'balance':
+      case 'coins':
       case 'daily':
       case 'profile':
       case 'level':
@@ -1804,6 +1951,11 @@ async function handleSlash(interaction, db, client) {
 
       case 'role-level': {
         await handleRoleLevelSlash(interaction, db);
+        break;
+      }
+
+      case 'swat-name': {
+        await swat.handleSwatNameInteraction(interaction, db);
         break;
       }
 
@@ -1829,8 +1981,8 @@ async function handleSlash(interaction, db, client) {
 }
 
 async function handleModerationSlash(interaction, db, client) {
-  requireModerator(db, interaction.member);
   const name = interaction.commandName;
+  requireCommandAccess(db, interaction.member, name);
 
   if (name === 'ban') {
     const user = interaction.options.getUser('user');
@@ -1973,7 +2125,7 @@ async function handleUtilitySlash(interaction, db, client) {
   const name = interaction.commandName;
 
   if (!['userinfo', 'snipe', 'first-message'].includes(name)) {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
   }
 
   if (name === 'lock' || name === 'unlock') {
@@ -2243,8 +2395,9 @@ async function handleGiveawaySlash(interaction, db) {
 }
 
 async function handleCaseSlash(interaction, db) {
-  requireModerator(db, interaction.member);
   const sub = interaction.options.getSubcommand();
+  if (sub === 'delete') requireAdmin(db, interaction.member);
+  else requireModerator(db, interaction.member);
   const caseId = interaction.options.getInteger('case_id');
   if (sub === 'delete') {
     db.deleteCase(interaction.guild.id, caseId);
@@ -2312,8 +2465,105 @@ async function handleBoosterRole(interaction, db) {
   await reply(interaction, { embeds: [success(db, interaction.guild.id, `Booster role ready: ${role}.`)] }, true);
 }
 
+function progressRank(db, guildId, userId, type = 'xp') {
+  return typeof db.memberProgressRank === 'function'
+    ? db.memberProgressRank(guildId, userId, type)
+    : null;
+}
+
+function levelCardPayload(db, guild, user, progress) {
+  const rank = progressRank(db, guild.id, user.id, 'xp');
+  const file = new AttachmentBuilder(progression.levelCardBuffer(user, progress, rank), { name: 'level.png' });
+  return {
+    embeds: [
+      buildEmbed(db, guild.id, {
+        title: `${user.username || user.tag} Level`,
+        image: 'attachment://level.png',
+        style: 'royal'
+      })
+    ],
+    files: [file]
+  };
+}
+
+function profileCardPayload(db, guild, user, progress, achievements) {
+  const rank = progressRank(db, guild.id, user.id, 'xp');
+  const file = new AttachmentBuilder(progression.profileCardBuffer(user, progress, achievements, rank), { name: 'profile.png' });
+  const embed = progression.profileEmbed(db, guild, user, progress, achievements);
+  embed.setImage('attachment://profile.png');
+  return {
+    embeds: [embed],
+    files: [file]
+  };
+}
+
 async function handleProgressionSlash(interaction, db) {
   const name = interaction.commandName;
+
+  if (name === 'level') {
+    const sub = interaction.options.getSubcommand();
+    if (sub !== 'show') {
+      requireModerator(db, interaction.member);
+      const user = interaction.options.getUser('user', true);
+      const amount = interaction.options.getInteger('amount') || 0;
+      let progress;
+      if (sub === 'add') {
+        progress = progression.addMemberLevels(db, interaction.guild.id, user.id, amount);
+        const member = interaction.options.getMember('user');
+        if (member) await progression.applyLevelRoles(db, member, progress).catch(() => null);
+        await reply(interaction, { embeds: [success(db, interaction.guild.id, `Added **${amount} level${amount === 1 ? '' : 's'}** to ${user}. New level: **${progress.level}**.`)] }, true);
+        return;
+      }
+      if (sub === 'remove') {
+        progress = progression.removeMemberLevels(db, interaction.guild.id, user.id, amount);
+        await reply(interaction, { embeds: [success(db, interaction.guild.id, `Removed **${amount} level${amount === 1 ? '' : 's'}** from ${user}. New level: **${progress.level}**.`)] }, true);
+        return;
+      }
+      progress = progression.resetMemberLevel(db, interaction.guild.id, user.id);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Reset ${user} to **level ${progress.level}** with **${progress.xp} XP**.`)] }, true);
+      return;
+    }
+
+    const user = interaction.options.getUser('user') || interaction.user;
+    const progress = db.ensureMemberProgress(interaction.guild.id, user.id);
+    await reply(interaction, levelCardPayload(db, interaction.guild, user, progress));
+    return;
+  }
+
+  if (name === 'coins') {
+    const sub = interaction.options.getSubcommand();
+    const user = interaction.options.getUser('user') || interaction.user;
+    if (sub === 'show') {
+      const progress = db.ensureMemberProgress(interaction.guild.id, user.id);
+      await reply(interaction, {
+        embeds: [
+          buildEmbed(db, interaction.guild.id, {
+            title: 'Coins',
+            description: `${user} has **${progress.balance || 0} coins**.`,
+            style: 'amber'
+          })
+        ]
+      });
+      return;
+    }
+
+    requireModerator(db, interaction.member);
+    const target = interaction.options.getUser('user', true);
+    const amount = interaction.options.getInteger('amount') || 0;
+    if (sub === 'add') {
+      const progress = progression.addCoins(db, interaction.guild.id, target.id, amount);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Added **${amount} coins** to ${target}. New balance: **${progress.balance} coins**.`)] }, true);
+      return;
+    }
+    if (sub === 'remove') {
+      const progress = progression.removeCoins(db, interaction.guild.id, target.id, amount);
+      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Removed **${amount} coins** from ${target}. New balance: **${progress.balance} coins**.`)] }, true);
+      return;
+    }
+    const progress = progression.resetCoins(db, interaction.guild.id, target.id);
+    await reply(interaction, { embeds: [success(db, interaction.guild.id, `Reset ${target} to **${progress.balance} coins**.`)] }, true);
+    return;
+  }
 
   if (name === 'daily') {
     const result = progression.claimDaily(db, interaction.guild.id, interaction.user.id);
@@ -2366,24 +2616,11 @@ async function handleProgressionSlash(interaction, db) {
     return;
   }
 
-  if (name === 'level') {
-    await reply(interaction, {
-      embeds: [
-        buildEmbed(db, interaction.guild.id, {
-          title: 'Level',
-          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
-          style: 'royal'
-        })
-      ]
-    });
-    return;
-  }
-
-  await reply(interaction, { embeds: [progression.profileEmbed(db, interaction.guild, user, progress, achievements)] });
+  await reply(interaction, profileCardPayload(db, interaction.guild, user, progress, achievements));
 }
 
 async function handleRoleLevelSlash(interaction, db) {
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'add') {
@@ -2530,8 +2767,8 @@ async function applyChannelUpdate(guild, channel, data) {
 }
 
 async function handleServerAdminSlash(interaction, db) {
-  requireModerator(db, interaction.member);
   const name = interaction.commandName;
+  requireCommandAccess(db, interaction.member, name);
 
   if (name === 'channel-create') {
     const channel = await applyChannelCreate(interaction.guild, {
@@ -2645,7 +2882,7 @@ async function handleServerAdminSlash(interaction, db) {
 }
 
 async function handleServerAdminPrefix(message, db, command, args) {
-  requireModerator(db, message.member);
+  requireCommandAccess(db, message.member, command);
   const { options, rest } = parseKeyValueOptions(args);
 
   if (command === 'channel-create') {
@@ -2937,7 +3174,7 @@ async function handleInvitesPrefix(message, db, client, args) {
 }
 
 async function handleInviteRoleSlash(interaction, db) {
-  requireModerator(db, interaction.member);
+  requireAdmin(db, interaction.member);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'add') {
@@ -2978,7 +3215,7 @@ async function handleInviteRoleSlash(interaction, db) {
 }
 
 async function handleInviteRolePrefix(message, db, args) {
-  requireModerator(db, message.member);
+  requireAdmin(db, message.member);
   const sub = String(args.shift() || 'list').toLowerCase();
 
   if (sub === 'add' || sub === 'set') {
@@ -3105,7 +3342,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'verification') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     const sub = interaction.options.getSubcommand();
     if (sub === 'setup') {
       await community.sendVerificationPanel(db, interaction, {
@@ -3132,7 +3369,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'channel-restriction') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     await interaction.deferReply({ ephemeral: true });
     const result = await community.applyChannelRestriction(db, interaction.guild, channelIdsFromText(interaction.options.getString('except')));
     await interaction.editReply({
@@ -3142,7 +3379,7 @@ async function handleCommunitySlash(interaction, db) {
   }
 
   if (name === 'mass-sync-categories') {
-    requireModerator(db, interaction.member);
+    requireCommandAccess(db, interaction.member, name);
     await interaction.deferReply({ ephemeral: true });
     const result = await community.massSyncCategoryPermissions(interaction.guild);
     await interaction.editReply({
@@ -3170,6 +3407,23 @@ async function handleCommunitySlash(interaction, db) {
   if (name === 'pet') {
     const sub = interaction.options.getSubcommand();
     let pet;
+    if (sub === 'reset') {
+      const target = interaction.options.getUser('user') || interaction.user;
+      if (target.id !== interaction.user.id) requireModerator(db, interaction.member);
+      const hadPet = community.resetPet(db, interaction.guild.id, target.id);
+      await reply(interaction, {
+        embeds: [
+          success(
+            db,
+            interaction.guild.id,
+            hadPet
+              ? `${target}'s digital pet has been reset.`
+              : `${target} did not have a digital pet saved.`
+          )
+        ]
+      }, target.id !== interaction.user.id);
+      return;
+    }
     if (sub === 'adopt') {
       const result = community.adoptPet(db, interaction.guild.id, interaction.user.id, interaction.options.getString('name'));
       pet = result.pet;
@@ -3262,7 +3516,8 @@ const HELP_SECTIONS = [
     lines: [
       '`give-role`, `remove-role`, `temp-role`, `temp-role-remove`, `temp-role-list`',
       '`role-create`, `role-rename`, `role-delete`, `server-rename`',
-      '`booster-role`, `role-level`, `daily`, `balance`, `profile`, `level`, `leaderboard`'
+      '`booster-role`, `role-level`, `daily`, `balance`, `coins`, `profile`, `level`, `leaderboard`',
+      '`level add/remove/reset @user amount`, `coins add/remove/reset @user amount`'
     ]
   },
   {
@@ -3270,8 +3525,9 @@ const HELP_SECTIONS = [
     label: 'Fun & Pet',
     lines: [
       '`game tictactoe/coinflip/dice/rps/8ball/slots/trivia/roulette/scramble`',
-      '`pet adopt [name]`, `pet feed`, `pet play`, `pet status`',
-      '`swat help` for case files, SWAT database, episode guessing, and season awards.'
+      '`pet adopt [name]`, `pet feed`, `pet play`, `pet status`, `pet reset`',
+      '`swat help` for case files, SWAT database, episode guessing, and season awards.',
+      '`swat name case template` or `/swat-name set` changes SWAT channel names.'
     ]
   },
   {
@@ -3900,6 +4156,59 @@ async function handleOwnerPrefix(message, db, client, command, args) {
 }
 
 async function handleProgressionPrefix(message, db, client, command, args) {
+  const sub = String(args[0] || '').toLowerCase();
+
+  if (command === 'level' && ['add', 'remove', 'reset'].includes(sub)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const userRaw = args.shift();
+    const user = userRaw ? await resolveUser(client, message.guild, userRaw) : null;
+    if (!user) throw new Error('Usage: r!level add|remove|reset @user [amount]');
+    const amount = Number(args.shift() || 0);
+    let progress;
+    if (sub === 'add') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!level add @user amount');
+      progress = progression.addMemberLevels(db, message.guild.id, user.id, amount);
+      const member = await message.guild.members.fetch(user.id).catch(() => null);
+      if (member) await progression.applyLevelRoles(db, member, progress).catch(() => null);
+      await message.reply({ embeds: [success(db, message.guild.id, `Added **${amount} level${amount === 1 ? '' : 's'}** to ${user}. New level: **${progress.level}**.`)] });
+      return;
+    }
+    if (sub === 'remove') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!level remove @user amount');
+      progress = progression.removeMemberLevels(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Removed **${amount} level${amount === 1 ? '' : 's'}** from ${user}. New level: **${progress.level}**.`)] });
+      return;
+    }
+    progress = progression.resetMemberLevel(db, message.guild.id, user.id);
+    await message.reply({ embeds: [success(db, message.guild.id, `Reset ${user} to **level ${progress.level}** with **${progress.xp} XP**.`)] });
+    return;
+  }
+
+  if (command === 'coins' && ['add', 'remove', 'reset'].includes(sub)) {
+    requireModerator(db, message.member);
+    args.shift();
+    const userRaw = args.shift();
+    const user = userRaw ? await resolveUser(client, message.guild, userRaw) : null;
+    if (!user) throw new Error('Usage: r!coins add|remove|reset @user [amount]');
+    const amount = Number(args.shift() || 0);
+    if (sub === 'add') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!coins add @user amount');
+      const progress = progression.addCoins(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Added **${amount} coins** to ${user}. New balance: **${progress.balance} coins**.`)] });
+      return;
+    }
+    if (sub === 'remove') {
+      if (!Number.isFinite(amount) || amount < 1) throw new Error('Usage: r!coins remove @user amount');
+      const progress = progression.removeCoins(db, message.guild.id, user.id, amount);
+      await message.reply({ embeds: [success(db, message.guild.id, `Removed **${amount} coins** from ${user}. New balance: **${progress.balance} coins**.`)] });
+      return;
+    }
+    const progress = progression.resetCoins(db, message.guild.id, user.id);
+    await message.reply({ embeds: [success(db, message.guild.id, `Reset ${user} to **${progress.balance} coins**.`)] });
+    return;
+  }
+
   if (command === 'daily') {
     const result = progression.claimDaily(db, message.guild.id, message.author.id);
     if (!result.claimed) {
@@ -3939,11 +4248,11 @@ async function handleProgressionPrefix(message, db, client, command, args) {
   const progress = db.ensureMemberProgress(message.guild.id, user.id);
   const achievements = db.listAchievements(message.guild.id, user.id);
 
-  if (command === 'balance') {
+  if (command === 'balance' || command === 'coins') {
     await message.reply({
       embeds: [
         buildEmbed(db, message.guild.id, {
-          title: 'Balance',
+          title: command === 'coins' ? 'Coins' : 'Balance',
           description: `${user} has **${progress.balance || 0} coins**.`,
           style: 'amber'
         })
@@ -3953,19 +4262,11 @@ async function handleProgressionPrefix(message, db, client, command, args) {
   }
 
   if (command === 'level') {
-    await message.reply({
-      embeds: [
-        buildEmbed(db, message.guild.id, {
-          title: 'Level',
-          description: `${user} is **level ${progress.level || 1}** with **${progress.xp || 0} XP**.`,
-          style: 'royal'
-        })
-      ]
-    });
+    await message.reply(levelCardPayload(db, message.guild, user, progress));
     return;
   }
 
-  await message.reply({ embeds: [progression.profileEmbed(db, message.guild, user, progress, achievements)] });
+  await message.reply(profileCardPayload(db, message.guild, user, progress, achievements));
 }
 
 async function handleRoleLevelPrefix(message, db, args) {
@@ -4080,7 +4381,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
   if (command === 'setup') {
-    requireModerator(db, message.member);
+    requireAdmin(db, message.member);
     await message.reply(setupHomePayload(db, message.guild.id));
     return;
   }
@@ -4100,19 +4401,19 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
 
-  if (['balance', 'daily', 'profile', 'level', 'leaderboard'].includes(command)) {
+  if (['balance', 'coins', 'daily', 'profile', 'level', 'leaderboard'].includes(command)) {
     await handleProgressionPrefix(message, db, client, command, args);
     return;
   }
 
   if (command === 'role-level') {
-    requireModerator(db, message.member);
+    requireAdmin(db, message.member);
     await handleRoleLevelPrefix(message, db, args);
     return;
   }
 
   if (command === 'verification') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const sub = String(args.shift() || 'status').toLowerCase();
     if (sub === 'setup') {
       const channelId = idFromMention(args.shift());
@@ -4140,7 +4441,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
   }
 
   if (command === 'channel-restriction') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const result = await community.applyChannelRestriction(db, message.guild, channelIdsFromText(args.join(' ')));
     await message.reply({
       embeds: [success(db, message.guild.id, `Restriction visibility synced. Updated ${result.updated} channels, skipped ${result.skipped}. Exempt: ${result.exempt.length || 0}.`)]
@@ -4149,7 +4450,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
   }
 
   if (command === 'mass-sync-categories') {
-    requireModerator(db, message.member);
+    requireCommandAccess(db, message.member, command);
     const result = await community.massSyncCategoryPermissions(message.guild);
     await message.reply({ embeds: [success(db, message.guild.id, `Synced ${result.synced} channels with their categories. Skipped ${result.skipped}.`)] });
     return;
@@ -4170,6 +4471,25 @@ async function handlePrefixCommand(message, db, client, command, args) {
   if (command === 'pet') {
     const sub = String(args.shift() || 'status').toLowerCase();
     let pet;
+    if (sub === 'reset') {
+      const targetRaw = args[0];
+      const target = targetRaw ? await resolveUser(client, message.guild, targetRaw) : message.author;
+      if (!target) throw new Error('User not found.');
+      if (target.id !== message.author.id) requireModerator(db, message.member);
+      const hadPet = community.resetPet(db, message.guild.id, target.id);
+      await message.reply({
+        embeds: [
+          success(
+            db,
+            message.guild.id,
+            hadPet
+              ? `${target}'s digital pet has been reset.`
+              : `${target} did not have a digital pet saved.`
+          )
+        ]
+      });
+      return;
+    }
     if (sub === 'adopt') {
       const result = community.adoptPet(db, message.guild.id, message.author.id, args.join(' '));
       pet = result.pet;
@@ -4265,7 +4585,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     'temp-role', 'temp-role-remove', 'temp-role-list', 'set-nick', 'remind', 'move',
     'mass-ban', 'case', 'ban-list', 'giveaway', 'steal-emoji', 'steal-sticker'
   ]);
-  if (modCommands.has(command)) requireModerator(db, message.member);
+  if (modCommands.has(command)) requireCommandAccess(db, message.member, command);
 
   if (command === 'ban') {
     const user = await resolveUser(client, message.guild, args.shift());
@@ -4574,6 +4894,7 @@ async function handlePrefixCommand(message, db, client, command, args) {
     const sub = args.shift();
     const caseId = Number(args.shift());
     if (sub === 'delete') {
+      requireAdmin(db, message.member);
       db.deleteCase(message.guild.id, caseId);
       await message.reply({ embeds: [success(db, message.guild.id, `Case #${caseId} deleted.`)] });
       return;

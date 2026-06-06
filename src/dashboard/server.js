@@ -20,6 +20,7 @@ const { slashCommands } = require('../commands');
 const community = require('../services/community');
 const dashboardControlResponses = require('../services/dashboardControls');
 const inviteRoles = require('../services/inviteRoles');
+const roleReactions = require('../services/roleReactions');
 const ticketService = require('../services/tickets');
 
 const SESSION_COOKIE = 'bot_dashboard_session';
@@ -74,14 +75,16 @@ const ROLE_CONFIG_KEYS = new Set([
   'restrict_perms_role',
   'restricted_role',
   'update_ping_role',
+  'bump_ping_role',
   'verified_role',
   'swat_guess_role',
   'auto_role'
 ]);
 
-const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'authorized_roles']);
+const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'moderator_roles', 'authorized_roles']);
 const CHANNEL_LIST_CONFIG_KEYS = new Set(['restriction_exempt_channels']);
-const USER_LIST_CONFIG_KEYS = new Set(['admin_users']);
+const CATEGORY_CONFIG_KEYS = new Set(['swat_case_category', 'swat_game_category', 'swat_guess_category']);
+const USER_LIST_CONFIG_KEYS = new Set(['admin_users', 'moderator_users']);
 const BOOLEAN_CONFIG_KEYS = new Set([
   'ai_moderation_enabled',
   'anti_raid_enabled',
@@ -114,10 +117,17 @@ const CONFIG_LABELS = {
   verification_message: 'Verification message',
   restriction_exempt_channels: 'Restriction exempt channels',
   bump_channel: 'Bump channel',
+  bump_ping_role: 'Bump ping role',
   bump_cooldown_minutes: 'Bump cooldown minutes',
   qna_channel: 'Q&A channel',
   qna_personality: 'Q&A personality',
-  swat_guess_role: 'SWAT guess reward role',
+  swat_guess_role: 'SWAT winner reward role',
+  swat_case_channel_name: 'SWAT case channel name',
+  swat_game_channel_name: 'SWAT game channel name',
+  swat_guess_channel_name: 'SWAT guess channel name',
+  swat_case_category: 'SWAT case category',
+  swat_game_category: 'SWAT game category',
+  swat_guess_category: 'SWAT guess category',
   auto_role: 'Auto role',
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
@@ -130,6 +140,8 @@ const CONFIG_LABELS = {
   embed_style: 'Embed style',
   admin_users: 'Admin users',
   admin_roles: 'Admin roles',
+  moderator_users: 'Moderator users',
+  moderator_roles: 'Moderator roles',
   authorized_roles: 'Restrict review roles',
   ai_moderation_enabled: 'AI moderation enabled',
   anti_raid_enabled: 'Anti-raid enabled',
@@ -326,6 +338,14 @@ async function handleRequest(context) {
       return;
     }
 
+    const guildRoleReactionPanelMatch = pathname.match(/^\/api\/guilds\/([^/]+)\/role-reactions\/panel$/);
+    if (guildRoleReactionPanelMatch && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const guildId = decodeURIComponent(guildRoleReactionPanelMatch[1]);
+      sendJson(res, 200, await upsertRoleReactionPanelFromDashboard(clients, db, guildId, body));
+      return;
+    }
+
     const guildMatch = pathname.match(/^\/api\/guilds\/([^/]+)$/);
     if (guildMatch && req.method === 'GET') {
       sendJson(res, 200, guildDetailPayload(clients, db, decodeURIComponent(guildMatch[1])));
@@ -466,6 +486,31 @@ function guildDetailPayload(client, db, guildId) {
       createdBy: row.created_by,
       createdAt: row.created_at
     })),
+    roleReactionPanels: safePayloadSection(errors, 'reaction-role panels', [], () => db.listRoleReactionPanels(guild.id)).map((row) => {
+      const options = db.listRoleReactionOptions(guild.id, row.panel_id).map((option) => ({
+        emoji: option.emoji,
+        emojiKey: option.emoji_key,
+        roleId: option.role_id,
+        role: roleLabel(guild, option.role_id),
+        label: option.label,
+        position: option.position
+      }));
+      return {
+        panelId: row.panel_id,
+        channelId: row.channel_id,
+        channel: channelLabel(guild, row.channel_id),
+        messageId: row.message_id,
+        title: row.title,
+        description: row.description,
+        content: row.content,
+        source: row.source || 'bot',
+        removeOnUnreact: row.remove_on_unreact !== 0,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        options,
+        url: `https://discord.com/channels/${guild.id}/${row.channel_id}/${row.message_id}`
+      };
+    }),
     tickets: safePayloadSection(errors, 'tickets', [], () => db.listTickets(guild.id, null, 20)).map((row) => ({
       panelId: row.panel_id,
       userId: row.user_id,
@@ -620,6 +665,7 @@ function commandOptions(command) {
 
 function configInputType(key) {
   if (CHANNEL_CONFIG_KEYS.has(key)) return 'channel';
+  if (CATEGORY_CONFIG_KEYS.has(key)) return 'category';
   if (CHANNEL_LIST_CONFIG_KEYS.has(key)) return 'channel-list';
   if (ROLE_CONFIG_KEYS.has(key)) return 'role';
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return 'role-list';
@@ -635,6 +681,7 @@ function configInputType(key) {
 
 function configPickerType(key) {
   if (CHANNEL_CONFIG_KEYS.has(key) || CHANNEL_LIST_CONFIG_KEYS.has(key)) return key === 'member_count_voice' ? 'voiceChannels' : 'textChannels';
+  if (CATEGORY_CONFIG_KEYS.has(key)) return 'categories';
   if (ROLE_CONFIG_KEYS.has(key) || ROLE_LIST_CONFIG_KEYS.has(key)) return 'roles';
   if (USER_LIST_CONFIG_KEYS.has(key)) return 'users';
   if (key === 'embed_style') return 'styles';
@@ -1094,6 +1141,55 @@ async function upsertTicketPanelFromDashboard(client, db, guildId, body) {
     url,
     detail: guildDetailPayload(client, db, guild.id)
   };
+}
+
+async function upsertRoleReactionPanelFromDashboard(client, db, guildId, body) {
+  const guild = getGuild(client, guildId);
+  if (!guild) throw httpError(404, 'Guild not found.');
+  requireGuildPermission(guild, PermissionsBitField.Flags.ManageRoles, 'Manage Roles');
+
+  const source = body.source === 'existing' ? 'existing' : 'bot';
+  const messageReference = parseMessageReference(body.messageReference || body.messageUrl || body.messageId);
+  const channelId = source === 'existing'
+    ? cleanText(messageReference.channelId || body.channelId, 40)
+    : cleanText(body.channelId, 40);
+  const messageId = source === 'existing'
+    ? cleanText(messageReference.messageId || body.messageId, 40)
+    : null;
+  const options = Array.isArray(body.options) ? body.options : [];
+  for (const option of options) {
+    if (option?.roleId) requireEditableRole(guild, option.roleId);
+  }
+
+  const result = await roleReactions.createOrUpdateRoleReactionPanel(db, guild, {
+    panelId: body.panelId,
+    channelId,
+    messageId,
+    title: body.title,
+    description: body.description,
+    content: body.content,
+    source,
+    removeOnUnreact: body.removeOnUnreact !== false,
+    options,
+    createdBy: env.botOwnerId || 'dashboard'
+  }).catch((err) => {
+    throw httpError(400, err.message || 'Reaction-role panel failed.');
+  });
+
+  return {
+    action: source === 'existing' ? 'attached' : 'posted',
+    panelId: result.panel.panelId,
+    url: result.url,
+    detail: guildDetailPayload(client, db, guild.id)
+  };
+}
+
+function parseMessageReference(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/discord(?:app)?\.com\/channels\/\d+\/(\d+)\/(\d+)/i);
+  if (match) return { channelId: match[1], messageId: match[2] };
+  if (/^\d{15,25}$/.test(text)) return { channelId: null, messageId: text };
+  return { channelId: null, messageId: null };
 }
 
 async function dashboardTextChannel(guild, channelId) {
@@ -1728,12 +1824,14 @@ function normalizeConfigValue(key, value) {
     if (typeof value === 'object') {
       if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(value);
       if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(value);
+      if (key === 'role_level_rewards') return normalizeRoleLevelRewards(value);
       return value;
     }
     try {
       const parsed = JSON.parse(String(value));
       if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(parsed);
       if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(parsed);
+      if (key === 'role_level_rewards') return normalizeRoleLevelRewards(parsed);
       return parsed;
     } catch {
       throw httpError(400, `${CONFIG_LABELS[key] || key} must be valid JSON.`);
@@ -1824,6 +1922,7 @@ function collectionSize(collection) {
 function displayConfigValue(client, guild, key, value) {
   if (isEmptyConfigValue(value)) return 'Not set';
   if (CHANNEL_CONFIG_KEYS.has(key)) return channelLabel(guild, value);
+  if (CATEGORY_CONFIG_KEYS.has(key)) return channelLabel(guild, value);
   if (CHANNEL_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => channelLabel(guild, id)).join(', ');
   if (ROLE_CONFIG_KEYS.has(key)) return roleLabel(guild, value);
   if (ROLE_LIST_CONFIG_KEYS.has(key)) return listConfigValues(value).map((id) => roleLabel(guild, id)).join(', ');
@@ -1832,6 +1931,11 @@ function displayConfigValue(client, guild, key, value) {
   if (key === 'anti_raid_action') {
     const labels = { restrict: 'Restrict', kick: 'Kick', timeout: 'Timeout', log: 'Log only' };
     return labels[String(value || '').toLowerCase()] || String(value);
+  }
+  if (key === 'role_level_rewards') {
+    return normalizeRoleLevelRewards(value)
+      .map((reward, index) => `${index + 1}. Level ${reward.level} -> ${roleLabel(guild, reward.roleId)}`)
+      .join(', ');
   }
   if (key === 'sticky') {
     return value?.channelId ? `${channelLabel(guild, value.channelId)} - ${value.message || 'Sticky message'}` : JSON.stringify(value);
@@ -1853,6 +1957,22 @@ function listConfigValues(value) {
   if (Array.isArray(value)) return value;
   if (value === null || value === undefined || value === '') return [];
   return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeRoleLevelRewards(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([level, roleId]) => ({ level, roleId }))
+      : [];
+  const byLevel = new Map();
+  for (const row of rows) {
+    const level = Number.parseInt(row?.level, 10);
+    const roleId = String(row?.roleId || row?.role_id || row?.role || '').replace(/[<@&>]/g, '').trim();
+    if (!Number.isFinite(level) || level < 1 || !roleId) continue;
+    byLevel.set(level, { level, roleId });
+  }
+  return [...byLevel.values()].sort((a, b) => a.level - b.level);
 }
 
 function channelLabel(guild, id) {

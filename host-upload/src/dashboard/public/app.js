@@ -124,6 +124,7 @@ function bindElements() {
     configTextField: document.getElementById('configTextField'),
     configChoicePanel: document.getElementById('configChoicePanel'),
     configBooleanInput: document.getElementById('configBooleanInput'),
+    configCustomEditor: document.getElementById('configCustomEditor'),
     configPickerButton: document.getElementById('configPickerButton'),
     configTable: document.getElementById('configTable'),
     ticketPanelForm: document.getElementById('ticketPanelForm'),
@@ -143,6 +144,20 @@ function bindElements() {
     ticketPanelOpenMessageInput: document.getElementById('ticketPanelOpenMessageInput'),
     ticketPanelCloseLabelInput: document.getElementById('ticketPanelCloseLabelInput'),
     ticketPanelDeleteLabelInput: document.getElementById('ticketPanelDeleteLabelInput'),
+    roleReactForm: document.getElementById('roleReactForm'),
+    roleReactStatus: document.getElementById('roleReactStatus'),
+    roleReactNewButton: document.getElementById('roleReactNewButton'),
+    roleReactPanelList: document.getElementById('roleReactPanelList'),
+    roleReactPanelIdInput: document.getElementById('roleReactPanelIdInput'),
+    roleReactSourceInput: document.getElementById('roleReactSourceInput'),
+    roleReactChannelSelect: document.getElementById('roleReactChannelSelect'),
+    roleReactMessageInput: document.getElementById('roleReactMessageInput'),
+    roleReactTitleInput: document.getElementById('roleReactTitleInput'),
+    roleReactDescriptionInput: document.getElementById('roleReactDescriptionInput'),
+    roleReactContentInput: document.getElementById('roleReactContentInput'),
+    roleReactRemoveInput: document.getElementById('roleReactRemoveInput'),
+    roleReactOptionList: document.getElementById('roleReactOptionList'),
+    roleReactAddOptionButton: document.getElementById('roleReactAddOptionButton'),
     restrictionList: document.getElementById('restrictionList'),
     caseList: document.getElementById('caseList'),
     ticketList: document.getElementById('ticketList'),
@@ -241,6 +256,29 @@ function bindEvents() {
 
   els.configKeySelect.addEventListener('change', syncConfigEditor);
   els.configPickerButton.addEventListener('click', openConfigPicker);
+  els.configCustomEditor.addEventListener('click', (event) => {
+    const tokenButton = event.target.closest('[data-insert-token]');
+    if (tokenButton) {
+      insertTokenIntoCustomField(tokenButton.dataset.insertToken || '', tokenButton);
+      syncCustomConfigValueFromEditor();
+      return;
+    }
+
+    const addButton = event.target.closest('[data-custom-add]');
+    if (addButton) {
+      addCustomEditorRow(addButton.dataset.customAdd);
+      syncCustomConfigValueFromEditor();
+      return;
+    }
+
+    const removeButton = event.target.closest('[data-custom-remove]');
+    if (removeButton) {
+      removeButton.closest('[data-custom-row]')?.remove();
+      syncCustomConfigValueFromEditor();
+    }
+  });
+  els.configCustomEditor.addEventListener('input', syncCustomConfigValueFromEditor);
+  els.configCustomEditor.addEventListener('change', syncCustomConfigValueFromEditor);
 
   els.channelCreateForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -303,9 +341,6 @@ function bindEvents() {
   els.channelManageSelect.addEventListener('change', syncChannelManager);
   els.categoryManageSelect.addEventListener('change', syncCategoryManager);
   els.roleManageSelect.addEventListener('change', syncRoleManager);
-  els.channelManageForm.addEventListener('submit', (event) => event.preventDefault());
-  els.categoryManageForm.addEventListener('submit', (event) => event.preventDefault());
-  els.roleManageForm.addEventListener('submit', (event) => event.preventDefault());
 
   els.channelRenameButton.addEventListener('click', async () => {
     await runSelectedGuildAction({
@@ -323,12 +358,7 @@ function bindEvents() {
       topic: els.channelManageTopicInput.value,
       slowmode: els.channelManageSlowmodeInput.value,
       lockState: els.channelManageLockSelect.value
-    }, {
-      button: els.channelUpdateButton,
-      onSuccess: () => {
-        els.channelManageLockSelect.value = 'keep';
-      }
-    });
+    }, { button: els.channelUpdateButton });
   });
 
   els.channelDeleteButton.addEventListener('click', async () => {
@@ -436,7 +466,12 @@ function bindEvents() {
     if (!state.selectedGuildId) return;
     const key = els.configKeySelect.value;
     const row = state.guildDetail?.config.find((item) => item.key === key);
-    const value = row?.type === 'boolean' ? selectedBooleanConfigValue() : els.configValueInput.value;
+    const customType = customConfigType(row);
+    const value = configSubmitValue(row);
+    if (customType === 'qna-setup' || customType === 'swat-setup') {
+      await saveConfigValues(value, customType === 'qna-setup' ? 'Q&A setup saved.' : 'SWAT setup saved.');
+      return;
+    }
     await saveConfigValue(key, value);
   });
 
@@ -476,6 +511,47 @@ function bindEvents() {
   els.ticketPanelNewButton.addEventListener('click', () => {
     fillTicketPanelForm(null);
     showToast('New ticket panel ready.');
+  });
+
+  els.roleReactForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!state.selectedGuildId) return;
+    const submitButton = els.roleReactForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    try {
+      const response = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/role-reactions/panel`, {
+        method: 'POST',
+        body: roleReactPayload()
+      });
+      state.guildDetail = response.detail;
+      renderGuildDetail(response.detail);
+      showToast(`Reaction-role panel ${response.action}.`);
+    } catch (err) {
+      showToast(err.message || 'Reaction-role save failed.');
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  els.roleReactForm.addEventListener('click', (event) => {
+    const sourceButton = event.target.closest('[data-role-react-source]');
+    if (sourceButton) {
+      setRoleReactSource(sourceButton.dataset.roleReactSource);
+      return;
+    }
+    const removeButton = event.target.closest('[data-role-react-remove]');
+    if (removeButton) {
+      removeButton.closest('[data-role-react-row]')?.remove();
+    }
+  });
+
+  els.roleReactAddOptionButton.addEventListener('click', () => {
+    addRoleReactOptionRow();
+  });
+
+  els.roleReactNewButton.addEventListener('click', () => {
+    fillRoleReactForm(null);
+    showToast('New reaction-role panel ready.');
   });
 
   els.broadcastForm.addEventListener('submit', async (event) => {
@@ -773,7 +849,7 @@ function renderCommandCatalog(commands) {
 
 function commandSections(commands) {
   const groups = [
-    ['setup', 'Setup', 'Configuration, verification, server setup.', new Set(['setup', 'verification', 'channel-restriction', 'mass-sync-categories', 'qna'])],
+    ['setup', 'Setup', 'Configuration, verification, server setup.', new Set(['setup', 'verification', 'channel-restriction', 'mass-sync-categories', 'qna', 'swat-name'])],
     ['tickets', 'Tickets', 'Panel creation and support flow tools.', new Set(['ticket-panel'])],
     ['moderation', 'Moderation', 'Restriction, cases, warnings, bans.', new Set(['restrict', 'unrestrict', 'ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'warnings', 'softban', 'mass-ban', 'case', 'ban-list', 'note'])],
     ['channels', 'Channels & Roles', 'Permissions, cleanup, roles, voice tools.', new Set(['lock', 'unlock', 'lockdown', 'unlockdown', 'purge', 'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user', 'temp-role', 'temp-role-remove', 'temp-role-list', 'move', 'set-nick'])],
@@ -856,6 +932,7 @@ function renderGuildDetail(detail) {
 
   renderConfig(detail.config);
   renderTicketPanelForm(detail);
+  renderRoleReactForm(detail);
   renderTicketStats(detail);
   renderEmbedSender(detail);
   renderServerActions(guild);
@@ -863,6 +940,7 @@ function renderGuildDetail(detail) {
   renderRestrictions(detail.activeRestrictions);
   renderCases(detail.recentCases);
   renderTicketPanelList(detail.ticketPanels);
+  renderRoleReactPanelList(detail.roleReactionPanels);
   renderTickets(detail.tickets);
   renderScheduled(detail);
 }
@@ -964,6 +1042,92 @@ function ticketPanelPayload() {
     openMessage: els.ticketPanelOpenMessageInput.value,
     closeButtonLabel: els.ticketPanelCloseLabelInput.value,
     deleteButtonLabel: els.ticketPanelDeleteLabelInput.value
+  };
+}
+
+function renderRoleReactForm(detail) {
+  const textChannels = detail.options?.textChannels || [];
+  const activePanel = detail.roleReactionPanels?.[0] || null;
+  fillSelect(els.roleReactChannelSelect, textChannels, 'Choose a text channel', true);
+  if (!els.roleReactPanelIdInput.value && activePanel) {
+    fillRoleReactForm(activePanel);
+  } else if (!activePanel) {
+    fillRoleReactForm(null);
+  }
+
+  const panels = detail.roleReactionPanels || [];
+  const optionCount = panels.reduce((count, panel) => count + (panel.options?.length || 0), 0);
+  els.roleReactStatus.textContent = `${formatNumber(panels.length)} panels - ${formatNumber(optionCount)} roles`;
+}
+
+function fillRoleReactForm(panel) {
+  els.roleReactPanelIdInput.value = panel?.panelId || '';
+  setRoleReactSource(panel?.source || 'bot');
+  setSelectValue(els.roleReactChannelSelect, panel?.channelId || '');
+  els.roleReactMessageInput.value = panel?.messageId || '';
+  els.roleReactTitleInput.value = panel?.title || 'Choose Your Roles';
+  els.roleReactDescriptionInput.value = panel?.description || 'React below to get or remove roles.';
+  els.roleReactContentInput.value = panel?.content || '';
+  els.roleReactRemoveInput.checked = panel?.removeOnUnreact !== false;
+  const options = panel?.options?.length ? panel.options : [{ emoji: '✅', roleId: '', label: '' }];
+  els.roleReactOptionList.innerHTML = options.map((option, index) => roleReactOptionRowHtml(option, index)).join('');
+}
+
+function setRoleReactSource(source) {
+  const normalized = source === 'existing' ? 'existing' : 'bot';
+  els.roleReactSourceInput.value = normalized;
+  els.roleReactForm.querySelectorAll('[data-role-react-source]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.roleReactSource === normalized);
+  });
+  els.roleReactMessageInput.disabled = normalized !== 'existing';
+  els.roleReactMessageInput.placeholder = normalized === 'existing' ? 'Message link or ID' : 'Only needed for existing messages';
+}
+
+function roleReactOptionRowHtml(option = {}, index = 0) {
+  return `
+    <div class="builder-row role-react-row" data-role-react-row>
+      <label>
+        Emoji
+        <input type="text" maxlength="80" value="${escapeAttribute(option.emoji || '')}" placeholder="✅" data-role-react-emoji>
+      </label>
+      <label>
+        Role
+        <select data-role-react-role>
+          <option value="">No role</option>
+          ${roleOptionsHtml(option.roleId)}
+        </select>
+      </label>
+      <label>
+        Label
+        <input type="text" maxlength="80" value="${escapeAttribute(option.label || '')}" placeholder="Announcements" data-role-react-label>
+      </label>
+      <button class="secondary-button compact" type="button" data-role-react-remove>Remove</button>
+    </div>
+  `;
+}
+
+function addRoleReactOptionRow() {
+  const count = els.roleReactOptionList.querySelectorAll('[data-role-react-row]').length;
+  els.roleReactOptionList.insertAdjacentHTML('beforeend', roleReactOptionRowHtml({ emoji: '', roleId: '', label: '' }, count));
+}
+
+function roleReactPayload() {
+  return {
+    panelId: els.roleReactPanelIdInput.value,
+    source: els.roleReactSourceInput.value,
+    channelId: els.roleReactChannelSelect.value,
+    messageReference: els.roleReactMessageInput.value,
+    title: els.roleReactTitleInput.value,
+    description: els.roleReactDescriptionInput.value,
+    content: els.roleReactContentInput.value,
+    removeOnUnreact: els.roleReactRemoveInput.checked,
+    options: [...els.roleReactOptionList.querySelectorAll('[data-role-react-row]')]
+      .map((row) => ({
+        emoji: row.querySelector('[data-role-react-emoji]')?.value.trim() || '',
+        roleId: row.querySelector('[data-role-react-role]')?.value || '',
+        label: row.querySelector('[data-role-react-label]')?.value.trim() || ''
+      }))
+      .filter((row) => row.emoji && row.roleId)
   };
 }
 
@@ -1615,22 +1779,28 @@ function syncConfigEditor() {
     els.configValueInput.value = '';
     els.configTextField?.classList.add('is-hidden');
     els.configChoicePanel.innerHTML = choicePanelMarkup(null);
+    els.configBooleanInput.classList.add('is-hidden');
     els.configPickerButton.disabled = true;
+    els.configCustomEditor.classList.add('is-hidden');
+    els.configCustomEditor.innerHTML = '';
     return;
   }
   const isBoolean = row.type === 'boolean';
   const isPicker = Boolean(row.picker);
+  const customType = customConfigType(row);
+  const hasCustomEditor = Boolean(customType);
   els.configValueInput.value = configInputValue(row.value);
-  els.configTextField?.classList.toggle('is-hidden', isBoolean || isPicker);
+  els.configTextField?.classList.toggle('is-hidden', isBoolean || isPicker || hasCustomEditor);
   els.configBooleanInput.classList.toggle('is-hidden', !isBoolean);
   els.configChoicePanel.innerHTML = choicePanelMarkup(row);
   if (isBoolean) setBooleanControlValue(Boolean(row.value));
-  els.configPickerButton.classList.toggle('is-hidden', !isPicker);
-  els.configPickerButton.disabled = !isPicker;
+  els.configPickerButton.classList.toggle('is-hidden', !isPicker || hasCustomEditor);
+  els.configPickerButton.disabled = !isPicker || hasCustomEditor;
   els.configPickerButton.textContent = isPicker ? `Choose ${choiceKindLabel(row).toLowerCase()}` : 'Open';
   const submitButton = els.configForm.querySelector('button[type="submit"]');
-  submitButton?.classList.toggle('is-hidden', isPicker);
-  if (submitButton) submitButton.textContent = isBoolean ? 'Save state' : 'Save setting';
+  submitButton?.classList.toggle('is-hidden', isPicker && !hasCustomEditor);
+  if (submitButton) submitButton.textContent = configSubmitLabel(row);
+  renderCustomConfigEditor(row);
 }
 
 function setBooleanControlValue(enabled) {
@@ -1655,9 +1825,645 @@ async function saveConfigValue(key, value) {
   showToast('Setting saved.');
 }
 
+async function saveConfigValues(values, message = 'Settings saved.') {
+  let detail = state.guildDetail;
+  for (const [key, value] of Object.entries(values || {})) {
+    detail = await request(`/api/guilds/${encodeURIComponent(state.selectedGuildId)}/config`, {
+      method: 'POST',
+      body: { key, value }
+    });
+  }
+  state.guildDetail = detail;
+  renderGuildDetail(detail);
+  await loadOverview(false);
+  showToast(message);
+}
+
+function renderCustomConfigEditor(row) {
+  const type = customConfigType(row);
+  if (!type) {
+    els.configCustomEditor.classList.add('is-hidden');
+    els.configCustomEditor.innerHTML = '';
+    return;
+  }
+
+  els.configCustomEditor.classList.remove('is-hidden');
+  if (type === 'qna-setup') renderQnaSetupEditor(row);
+  else if (type === 'swat-setup') renderSwatSetupEditor(row);
+  else if (type === 'role-level-rewards') renderRoleRewardEditor(row);
+  else if (type === 'invite-role-mappings') renderInviteRoleEditor(row);
+  else if (type === 'invite-count-rewards') renderInviteCountEditor(row);
+  else if (type === 'sticky') renderStickyEditor(row);
+  else if (type === 'number') renderNumberConfigEditor(row);
+  else if (type === 'text-template') renderTextConfigEditor(row);
+  syncCustomConfigValueFromEditor();
+}
+
+function customConfigType(row) {
+  if (!row) return null;
+  if (['qna_channel', 'qna_personality'].includes(row.key)) return 'qna-setup';
+  if (/^swat_/.test(row.key)) return 'swat-setup';
+  if (row.key === 'role_level_rewards') return 'role-level-rewards';
+  if (row.key === 'invite_role_mappings') return 'invite-role-mappings';
+  if (row.key === 'invite_count_role_rewards') return 'invite-count-rewards';
+  if (row.key === 'sticky') return 'sticky';
+  if (row.type === 'number') return 'number';
+  if (row.type === 'message' || row.type === 'text') return 'text-template';
+  return null;
+}
+
+function guildConfigValue(key, fallback = '') {
+  const row = state.guildDetail?.config?.find((item) => item.key === key);
+  return row?.value ?? fallback;
+}
+
+function renderQnaSetupEditor() {
+  const channelId = guildConfigValue('qna_channel', '');
+  const personality = configInputValue(guildConfigValue('qna_personality', ''));
+  els.configCustomEditor.innerHTML = `
+    <div class="custom-editor-head setup-editor-head">
+      <div>
+        <strong>Q&A Setup</strong>
+        <span>Choose where Q&A runs and the exact personality it must follow.</span>
+      </div>
+    </div>
+    <div class="setting-editor-grid setup-editor-grid">
+      <label>
+        Q&A channel
+        <select data-qna-channel>
+          <option value="">No Q&A channel</option>
+          ${channelOptionsHtml(channelId, 'textChannels')}
+        </select>
+      </label>
+      <label class="wide">
+        Personality
+        <textarea rows="5" maxlength="1000" data-qna-personality data-custom-text placeholder="Example: Answer as a serious support assistant. Be short, accurate, and only discuss server help.">${escapeHtml(personality)}</textarea>
+      </label>
+    </div>
+  `;
+}
+
+function renderSwatSetupEditor() {
+  const rows = [
+    {
+      title: 'Case',
+      nameKey: 'swat_case_channel_name',
+      categoryKey: 'swat_case_category',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲',
+      tokens: ['{title}', '{theme}', '{kind}']
+    },
+    {
+      title: 'Roleplay Games',
+      nameKey: 'swat_game_channel_name',
+      categoryKey: 'swat_game_category',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 {game}',
+      tokens: ['{game}', '{title}', '{theme}', '{kind}']
+    },
+    {
+      title: 'Episode Guess',
+      nameKey: 'swat_guess_channel_name',
+      categoryKey: 'swat_guess_category',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 𝗚𝘂𝗲𝘀𝘀',
+      tokens: ['{episode}', '{title}', '{kind}']
+    }
+  ];
+  els.configCustomEditor.innerHTML = `
+    <div class="custom-editor-head setup-editor-head">
+      <div>
+        <strong>SWAT Setup</strong>
+        <span>Choose the reward role, where new channels are created, and the channel name templates.</span>
+      </div>
+    </div>
+    <div class="setting-editor-grid setup-editor-grid">
+      <label class="wide">
+        Winner reward role
+        <select data-swat-field="swat_guess_role">
+          <option value="">No reward role</option>
+          ${roleOptionsHtml(guildConfigValue('swat_guess_role', ''))}
+        </select>
+      </label>
+      ${rows.map((item) => swatSetupSectionHtml(item)).join('')}
+    </div>
+  `;
+}
+
+function swatSetupSectionHtml(item) {
+  const nameValue = configInputValue(guildConfigValue(item.nameKey, item.placeholder));
+  const categoryValue = guildConfigValue(item.categoryKey, '');
+  return `
+    <div class="setup-feature-card wide">
+      <div class="setup-feature-title">
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>New channels are created in this category and named from this template.</span>
+      </div>
+      <label>
+        Category
+        <select data-swat-field="${escapeAttribute(item.categoryKey)}">
+          <option value="">Use command channel category</option>
+          ${categoryOptionsHtml(categoryValue)}
+        </select>
+      </label>
+      <label>
+        Channel name
+        <input type="text" maxlength="100" value="${escapeAttribute(nameValue)}" placeholder="${escapeAttribute(item.placeholder)}" data-swat-field="${escapeAttribute(item.nameKey)}" data-custom-text>
+      </label>
+      ${tokenRowHtml(item.tokens)}
+    </div>
+  `;
+}
+
+function renderRoleRewardEditor(row) {
+  const rewards = normalizeRoleRewardRows(row.value);
+  const visibleRows = rewards.length ? rewards : [
+    { level: 1, roleId: '' },
+    { level: 2, roleId: '' },
+    { level: 3, roleId: '' }
+  ];
+  els.configCustomEditor.innerHTML = `
+    ${customEditorHead('Level Rewards', 'Add one row per reward role. Each row chooses the exact level required and the role to grant.', 'Add Reward', 'role-level-rewards')}
+    <div class="config-editor-list role-reward-list">
+      ${visibleRows.map((reward, index) => roleRewardRowHtml(reward, index)).join('')}
+    </div>
+  `;
+}
+
+function renderInviteRoleEditor(row) {
+  const mappings = normalizeInviteRoleRows(row.value);
+  const visibleRows = mappings.length ? mappings : [{ code: '', roleId: '' }];
+  els.configCustomEditor.innerHTML = `
+    ${customEditorHead('Invite Role Mappings', 'Give a role when a member joins through a specific invite code or invite URL.', 'Add Invite Role', 'invite-role-mappings')}
+    <div class="config-editor-list invite-role-list">
+      ${visibleRows.map((mapping, index) => inviteRoleRowHtml(mapping, index)).join('')}
+    </div>
+  `;
+}
+
+function renderInviteCountEditor(row) {
+  const rewards = normalizeInviteCountRewardRows(row.value);
+  const visibleRows = rewards.length ? rewards : [{ invites: 1, roleId: '' }];
+  els.configCustomEditor.innerHTML = `
+    ${customEditorHead('Invite Count Rewards', 'Give inviters a role when their tracked invite count reaches a target.', 'Add Count Reward', 'invite-count-rewards')}
+    <div class="config-editor-list invite-count-list">
+      ${visibleRows.map((reward, index) => inviteCountRowHtml(reward, index)).join('')}
+    </div>
+  `;
+}
+
+function renderStickyEditor(row) {
+  const sticky = normalizeStickyConfig(row.value);
+  els.configCustomEditor.innerHTML = `
+    <div class="custom-editor-head">
+      <div>
+        <strong>Sticky Message</strong>
+        <span>Choose the channel and message the bot should keep reposting at the bottom.</span>
+      </div>
+    </div>
+    <div class="setting-editor-grid">
+      <label>
+        Channel
+        <select data-sticky-channel>
+          <option value="">No sticky channel</option>
+          ${channelOptionsHtml(sticky.channelId, 'textChannels')}
+        </select>
+      </label>
+      <label class="wide">
+        Message
+        <textarea rows="4" maxlength="3900" data-sticky-message placeholder="Write the sticky message">${escapeHtml(sticky.message || '')}</textarea>
+      </label>
+    </div>
+  `;
+}
+
+function renderNumberConfigEditor(row) {
+  const meta = numberConfigMeta(row.key);
+  els.configCustomEditor.innerHTML = `
+    <div class="custom-editor-head">
+      <div>
+        <strong>${escapeHtml(row.label)}</strong>
+        <span>${escapeHtml(meta.description)}</span>
+      </div>
+    </div>
+    <div class="setting-editor-grid">
+      <label>
+        ${escapeHtml(meta.label)}
+        <input type="number" min="${escapeAttribute(meta.min)}" max="${escapeAttribute(meta.max)}" step="${escapeAttribute(meta.step)}" value="${escapeAttribute(row.value ?? meta.fallback)}" data-custom-number>
+      </label>
+    </div>
+  `;
+}
+
+function renderTextConfigEditor(row) {
+  const meta = textConfigMeta(row.key);
+  const value = configInputValue(row.value || meta.fallback || '');
+  const field = meta.singleLine
+    ? `<input type="text" maxlength="${escapeAttribute(meta.maxLength)}" value="${escapeAttribute(value)}" placeholder="${escapeAttribute(meta.placeholder)}" data-custom-text>`
+    : `<textarea rows="${escapeAttribute(meta.rows)}" maxlength="${escapeAttribute(meta.maxLength)}" placeholder="${escapeAttribute(meta.placeholder)}" data-custom-text>${escapeHtml(value)}</textarea>`;
+  els.configCustomEditor.innerHTML = `
+    <div class="custom-editor-head">
+      <div>
+        <strong>${escapeHtml(meta.title || row.label)}</strong>
+        <span>${escapeHtml(meta.description)}</span>
+      </div>
+    </div>
+    ${meta.tokens?.length ? tokenRowHtml(meta.tokens) : ''}
+    <div class="setting-editor-grid">
+      <label class="wide">
+        ${escapeHtml(meta.label)}
+        ${field}
+      </label>
+    </div>
+  `;
+}
+
+function customEditorHead(title, description, buttonLabel, addType) {
+  return `
+    <div class="custom-editor-head">
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(description)}</span>
+      </div>
+      <button class="secondary-button compact" type="button" data-custom-add="${escapeAttribute(addType)}">${escapeHtml(buttonLabel)}</button>
+    </div>
+  `;
+}
+
+function tokenRowHtml(tokens) {
+  return `
+    <div class="token-row">
+      ${tokens.map((token) => `<button class="secondary-button compact token-button" type="button" data-insert-token="${escapeAttribute(token)}">${escapeHtml(token)}</button>`).join('')}
+    </div>
+  `;
+}
+
+function normalizeRoleRewardRows(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([level, roleId]) => ({ level, roleId }))
+      : [];
+  return rows
+    .map((row) => ({
+      level: Number.parseInt(row.level, 10),
+      roleId: String(row.roleId || row.role_id || row.role || '').replace(/[<@&>]/g, '').trim()
+    }))
+    .filter((row) => Number.isFinite(row.level) && row.level > 0)
+    .sort((a, b) => a.level - b.level);
+}
+
+function normalizeInviteRoleRows(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([code, roleId]) => ({ code, roleId }))
+      : [];
+  return rows
+    .map((row) => ({
+      code: String(row.code || row.invite || row.url || '').trim(),
+      roleId: String(row.roleId || row.role_id || row.role || '').replace(/[<@&>]/g, '').trim()
+    }))
+    .filter((row) => row.code || row.roleId);
+}
+
+function normalizeInviteCountRewardRows(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.entries(value).map(([invites, roleId]) => ({ invites, roleId }))
+      : [];
+  return rows
+    .map((row) => ({
+      invites: Number.parseInt(row.invites || row.count || row.level, 10),
+      roleId: String(row.roleId || row.role_id || row.role || '').replace(/[<@&>]/g, '').trim()
+    }))
+    .filter((row) => Number.isFinite(row.invites) && row.invites > 0)
+    .sort((a, b) => a.invites - b.invites);
+}
+
+function normalizeStickyConfig(value) {
+  return value && typeof value === 'object'
+    ? { channelId: String(value.channelId || value.channel_id || '').trim(), message: String(value.message || '').trim() }
+    : { channelId: '', message: '' };
+}
+
+function roleRewardRowHtml(reward = {}, index = 0) {
+  const label = ordinalLabel(index);
+  return `
+    <div class="config-editor-row role-reward-row" data-custom-row data-role-reward-row>
+      <div class="reward-index">${escapeHtml(index + 1)}.</div>
+      <label>
+        ${escapeHtml(label)} level
+        <input type="number" min="1" max="500" value="${escapeAttribute(reward.level || index + 1)}" data-role-reward-level>
+      </label>
+      <label>
+        ${escapeHtml(label)} role
+        <select data-role-reward-role>
+          <option value="">No role</option>
+          ${roleOptionsHtml(reward.roleId)}
+        </select>
+      </label>
+      <button class="secondary-button compact" type="button" data-custom-remove>Remove</button>
+    </div>
+  `;
+}
+
+function inviteRoleRowHtml(mapping = {}, index = 0) {
+  return `
+    <div class="config-editor-row invite-role-row" data-custom-row data-invite-role-row>
+      <div class="reward-index">${escapeHtml(index + 1)}.</div>
+      <label>
+        Invite code or URL
+        <input type="text" maxlength="120" value="${escapeAttribute(mapping.code || '')}" placeholder="discord.gg/example" data-invite-code>
+      </label>
+      <label>
+        Role to give
+        <select data-invite-role>
+          <option value="">No role</option>
+          ${roleOptionsHtml(mapping.roleId)}
+        </select>
+      </label>
+      <button class="secondary-button compact" type="button" data-custom-remove>Remove</button>
+    </div>
+  `;
+}
+
+function inviteCountRowHtml(reward = {}, index = 0) {
+  return `
+    <div class="config-editor-row invite-count-row" data-custom-row data-invite-count-row>
+      <div class="reward-index">${escapeHtml(index + 1)}.</div>
+      <label>
+        Invites needed
+        <input type="number" min="1" max="1000000" value="${escapeAttribute(reward.invites || index + 1)}" data-invite-count>
+      </label>
+      <label>
+        Role to give
+        <select data-invite-count-role>
+          <option value="">No role</option>
+          ${roleOptionsHtml(reward.roleId)}
+        </select>
+      </label>
+      <button class="secondary-button compact" type="button" data-custom-remove>Remove</button>
+    </div>
+  `;
+}
+
+function roleOptionsHtml(selectedRoleId) {
+  const roles = state.guildDetail?.options?.roles || [];
+  return roles.map((role) => `
+    <option value="${escapeAttribute(role.id)}" ${String(role.id) === String(selectedRoleId) ? 'selected' : ''}>
+      ${escapeHtml(role.label || role.id)}
+    </option>
+  `).join('');
+}
+
+function channelOptionsHtml(selectedChannelId, optionKey = 'textChannels') {
+  const channels = state.guildDetail?.options?.[optionKey] || [];
+  return channels.map((channel) => `
+    <option value="${escapeAttribute(channel.id)}" ${String(channel.id) === String(selectedChannelId) ? 'selected' : ''}>
+      #${escapeHtml(channel.label || channel.id)}
+    </option>
+  `).join('');
+}
+
+function categoryOptionsHtml(selectedCategoryId) {
+  const categories = state.guildDetail?.options?.categories || [];
+  return categories.map((category) => `
+    <option value="${escapeAttribute(category.id)}" ${String(category.id) === String(selectedCategoryId) ? 'selected' : ''}>
+      ${escapeHtml(category.label || category.id)}
+    </option>
+  `).join('');
+}
+
+function addCustomEditorRow(type) {
+  if (type === 'role-level-rewards') return addRoleRewardEditorRow();
+  if (type === 'invite-role-mappings') return addInviteRoleEditorRow();
+  if (type === 'invite-count-rewards') return addInviteCountEditorRow();
+  return null;
+}
+
+function addRoleRewardEditorRow() {
+  const list = els.configCustomEditor.querySelector('.role-reward-list');
+  if (!list) return;
+  const existing = [...list.querySelectorAll('[data-role-reward-row]')];
+  const maxLevel = existing.reduce((max, row) => {
+    const level = Number.parseInt(row.querySelector('[data-role-reward-level]')?.value, 10);
+    return Number.isFinite(level) ? Math.max(max, level) : max;
+  }, existing.length);
+  list.insertAdjacentHTML('beforeend', roleRewardRowHtml({ level: maxLevel + 1, roleId: '' }, existing.length));
+}
+
+function addInviteRoleEditorRow() {
+  const list = els.configCustomEditor.querySelector('.invite-role-list');
+  if (!list) return;
+  const existing = list.querySelectorAll('[data-invite-role-row]').length;
+  list.insertAdjacentHTML('beforeend', inviteRoleRowHtml({ code: '', roleId: '' }, existing));
+}
+
+function addInviteCountEditorRow() {
+  const list = els.configCustomEditor.querySelector('.invite-count-list');
+  if (!list) return;
+  const existing = [...list.querySelectorAll('[data-invite-count-row]')];
+  const maxCount = existing.reduce((max, row) => {
+    const count = Number.parseInt(row.querySelector('[data-invite-count]')?.value, 10);
+    return Number.isFinite(count) ? Math.max(max, count) : max;
+  }, existing.length);
+  list.insertAdjacentHTML('beforeend', inviteCountRowHtml({ invites: maxCount + 1, roleId: '' }, existing.length));
+}
+
+function syncCustomConfigValueFromEditor() {
+  const row = state.guildDetail?.config.find((item) => item.key === els.configKeySelect.value);
+  const type = customConfigType(row);
+  if (!type) return;
+  const value = customConfigEditorValue(type);
+  els.configValueInput.value = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function customConfigEditorValue(type) {
+  if (type === 'qna-setup') return collectQnaSetup();
+  if (type === 'swat-setup') return collectSwatSetup();
+  if (type === 'role-level-rewards') return collectRoleRewardRows();
+  if (type === 'invite-role-mappings') return collectInviteRoleRows();
+  if (type === 'invite-count-rewards') return collectInviteCountRows();
+  if (type === 'sticky') return collectStickyConfig();
+  if (type === 'number') return Number.parseInt(els.configCustomEditor.querySelector('[data-custom-number]')?.value, 10) || 0;
+  if (type === 'text-template') return els.configCustomEditor.querySelector('[data-custom-text]')?.value || '';
+  return els.configValueInput.value;
+}
+
+function collectRoleRewardRows() {
+  const rows = [...els.configCustomEditor.querySelectorAll('[data-role-reward-row]')]
+    .map((row) => ({
+      level: Number.parseInt(row.querySelector('[data-role-reward-level]')?.value, 10),
+      roleId: row.querySelector('[data-role-reward-role]')?.value || ''
+    }))
+    .filter((row) => Number.isFinite(row.level) && row.level > 0 && row.roleId);
+  const byLevel = new Map();
+  for (const row of rows) byLevel.set(row.level, row);
+  return [...byLevel.values()].sort((a, b) => a.level - b.level);
+}
+
+function collectInviteRoleRows() {
+  const rows = [...els.configCustomEditor.querySelectorAll('[data-invite-role-row]')]
+    .map((row) => ({
+      code: row.querySelector('[data-invite-code]')?.value.trim() || '',
+      roleId: row.querySelector('[data-invite-role]')?.value || ''
+    }))
+    .filter((row) => row.code && row.roleId);
+  const byCode = new Map();
+  for (const row of rows) byCode.set(row.code, row);
+  return [...byCode.values()];
+}
+
+function collectInviteCountRows() {
+  const rows = [...els.configCustomEditor.querySelectorAll('[data-invite-count-row]')]
+    .map((row) => ({
+      invites: Number.parseInt(row.querySelector('[data-invite-count]')?.value, 10),
+      roleId: row.querySelector('[data-invite-count-role]')?.value || ''
+    }))
+    .filter((row) => Number.isFinite(row.invites) && row.invites > 0 && row.roleId);
+  const byCount = new Map();
+  for (const row of rows) byCount.set(row.invites, row);
+  return [...byCount.values()].sort((a, b) => a.invites - b.invites);
+}
+
+function collectStickyConfig() {
+  const channelId = els.configCustomEditor.querySelector('[data-sticky-channel]')?.value || '';
+  const message = els.configCustomEditor.querySelector('[data-sticky-message]')?.value.trim() || '';
+  return channelId && message ? { channelId, message, lastMessageId: null } : null;
+}
+
+function collectQnaSetup() {
+  return {
+    qna_channel: els.configCustomEditor.querySelector('[data-qna-channel]')?.value || null,
+    qna_personality: els.configCustomEditor.querySelector('[data-qna-personality]')?.value.trim() || ''
+  };
+}
+
+function collectSwatSetup() {
+  const values = {};
+  els.configCustomEditor.querySelectorAll('[data-swat-field]').forEach((field) => {
+    values[field.dataset.swatField] = field.value?.trim?.() || field.value || null;
+  });
+  return values;
+}
+
+function configSubmitValue(row) {
+  const customType = customConfigType(row);
+  if (customType) return customConfigEditorValue(customType);
+  if (row?.type === 'boolean') return selectedBooleanConfigValue();
+  return els.configValueInput.value;
+}
+
+function configSubmitLabel(row) {
+  const customType = customConfigType(row);
+  if (row?.type === 'boolean') return 'Save state';
+  if (customType === 'qna-setup') return 'Save Q&A setup';
+  if (customType === 'swat-setup') return 'Save SWAT setup';
+  if (customType === 'role-level-rewards' || customType === 'invite-role-mappings' || customType === 'invite-count-rewards') return 'Save rows';
+  if (customType === 'sticky') return 'Save sticky';
+  if (customType === 'number') return 'Save number';
+  if (customType === 'text-template') return 'Save text';
+  return 'Save setting';
+}
+
+function insertTokenIntoCustomField(token, trigger = null) {
+  if (!token) return;
+  const active = document.activeElement;
+  const field = els.configCustomEditor.contains(active) && active.matches?.('[data-custom-text]')
+    ? active
+    : trigger?.closest?.('.setup-feature-card')?.querySelector('[data-custom-text]') ||
+      els.configCustomEditor.querySelector('[data-custom-text]');
+  if (!field) return;
+  const start = field.selectionStart ?? field.value.length;
+  const end = field.selectionEnd ?? field.value.length;
+  field.value = `${field.value.slice(0, start)}${token}${field.value.slice(end)}`;
+  field.focus();
+  field.selectionStart = field.selectionEnd = start + token.length;
+}
+
+function ordinalLabel(index) {
+  return ['First reward', 'Second reward', 'Third reward'][index] || `Reward ${index + 1}`;
+}
+
+function numberConfigMeta(key) {
+  const configs = {
+    anti_raid_join_limit: { label: 'Join limit', min: 1, max: 100, step: 1, fallback: 6, description: 'How many joins inside the window should trigger anti-raid.' },
+    anti_raid_window_seconds: { label: 'Window seconds', min: 5, max: 3600, step: 1, fallback: 20, description: 'How many seconds the anti-raid join counter looks back.' },
+    xp_per_message_min: { label: 'Minimum XP', min: 1, max: 250, step: 1, fallback: 12, description: 'Lowest XP a tracked message can award.' },
+    xp_per_message_max: { label: 'Maximum XP', min: 1, max: 300, step: 1, fallback: 22, description: 'Highest XP a tracked message can award.' },
+    bump_cooldown_minutes: { label: 'Cooldown minutes', min: 1, max: 10080, step: 1, fallback: 120, description: 'Minutes members must wait between bump commands.' }
+  };
+  return configs[key] || { label: 'Value', min: 0, max: 1000000, step: 1, fallback: 0, description: 'Set the numeric value for this setting.' };
+}
+
+function textConfigMeta(key) {
+  const configs = {
+    welcome_message: {
+      title: 'Welcome Message',
+      label: 'Message template',
+      description: 'Message sent when a member joins. Insert the placeholders you need.',
+      placeholder: 'Welcome {user} to {server}. You are member #{memberCount}.',
+      tokens: ['{user}', '{server}', '{memberCount}'],
+      rows: 4,
+      maxLength: 1000
+    },
+    verification_message: {
+      title: 'Verification Message',
+      label: 'Panel message',
+      description: 'Text shown above the verification button.',
+      placeholder: 'Press the button below to verify and unlock the server.',
+      rows: 4,
+      maxLength: 1000
+    },
+    qna_personality: {
+      title: 'Q&A Personality',
+      label: 'AI behavior',
+      description: 'Controls how the Q&A channel answers members.',
+      placeholder: 'Accurate, friendly, and concise.',
+      rows: 5,
+      maxLength: 1000
+    },
+    swat_case_channel_name: {
+      title: 'SWAT Case Channel Name',
+      label: 'Channel name template',
+      description: 'Used when `swat case new` or `swat case add` creates a case channel.',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲',
+      tokens: ['{title}', '{theme}', '{kind}'],
+      singleLine: true,
+      maxLength: 100
+    },
+    swat_game_channel_name: {
+      title: 'SWAT Game Channel Name',
+      label: 'Channel name template',
+      description: 'Used by every SWAT roleplay game type.',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 {game}',
+      tokens: ['{game}', '{title}', '{theme}', '{kind}'],
+      singleLine: true,
+      maxLength: 100
+    },
+    swat_guess_channel_name: {
+      title: 'SWAT Guess Channel Name',
+      label: 'Channel name template',
+      description: 'Used when the episode guessing game creates its answer channel.',
+      placeholder: '📺┃𝗦𝘄𝗮𝘁 𝗚𝘂𝗲𝘀𝘀',
+      tokens: ['{episode}', '{title}', '{kind}'],
+      singleLine: true,
+      maxLength: 100
+    }
+  };
+  return configs[key] || {
+    title: 'Text Setting',
+    label: 'Text',
+    description: 'Set the saved text for this command setting.',
+    placeholder: '',
+    rows: 3,
+    maxLength: 1500
+  };
+}
+
 function typeLabel(type) {
   const labels = {
     channel: 'channel',
+    category: 'category',
     'channel-list': 'channels',
     role: 'role',
     'role-list': 'roles',
@@ -1674,10 +2480,15 @@ function typeLabel(type) {
 }
 
 function choiceKindLabel(row) {
+  if (['qna_channel', 'qna_personality'].includes(row?.key)) return 'Q&A setup';
+  if (/^swat_/.test(row?.key || '')) return 'SWAT setup';
+  if (row?.key === 'role_level_rewards') return 'Level rewards';
   if (row?.key === 'invite_role_mappings') return 'Invite roles';
   if (row?.key === 'invite_count_role_rewards') return 'Invite count roles';
+  if (row?.key === 'sticky') return 'Sticky message';
   const labels = {
     channel: 'Channel',
+    category: 'Category',
     'channel-list': 'Channels',
     role: 'Role',
     'role-list': 'Roles',
@@ -1695,8 +2506,13 @@ function choiceKindLabel(row) {
 function configChoiceLabel(row) {
   if (!row) return 'No setting selected';
   if (row.empty) return emptyChoiceLabel(row);
+  if (['qna_channel', 'qna_personality'].includes(row.key)) return 'Q&A setup saved';
+  if (/^swat_/.test(row.key || '')) return 'SWAT setup saved';
+  if (row.key === 'role_level_rewards') return 'Level rewards saved';
   if (row.key === 'invite_role_mappings') return 'Invite role mappings saved';
   if (row.key === 'invite_count_role_rewards') return 'Invite count rewards saved';
+  if (row.key === 'sticky') return 'Sticky message saved';
+  if (row.key?.startsWith('swat_') && row.key.endsWith('_channel_name')) return row.value || 'Channel name template saved';
   if (row.picker) {
     const options = state.guildDetail?.options?.[row.picker] || [];
     const labels = listConfigInputValues(row.value).map((id) => {
@@ -1716,10 +2532,16 @@ function configChoiceLabel(row) {
 }
 
 function emptyChoiceLabel(row) {
+  if (row?.key === 'role_level_rewards') return 'Add level rewards';
+  if (['qna_channel', 'qna_personality'].includes(row?.key)) return 'Set up Q&A';
+  if (/^swat_/.test(row?.key || '')) return 'Set up SWAT';
   if (row?.key === 'invite_role_mappings') return 'Add invite roles';
   if (row?.key === 'invite_count_role_rewards') return 'Add invite count rewards';
+  if (row?.key === 'sticky') return 'Choose sticky channel and message';
+  if (row?.key?.startsWith('swat_') && row.key.endsWith('_channel_name')) return 'Set channel name';
   const labels = {
     channel: 'Choose a channel',
+    category: 'Choose a category',
     'channel-list': 'Choose channels',
     role: 'Choose a role',
     'role-list': 'Choose roles',
@@ -2099,6 +2921,35 @@ function renderTicketPanelList(panels) {
       fillTicketPanelForm(panel);
       els.ticketPanelForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
       showToast(`Editing ${panel.name}.`);
+    });
+  });
+}
+
+function renderRoleReactPanelList(panels) {
+  const rows = (panels || []).map((panel) => `
+    <div class="ticket-panel-row role-react-panel-row">
+      <div>
+        <strong>${escapeHtml(panel.title || panel.panelId)}</strong>
+        <span>${escapeHtml((panel.options || []).map((option) => `${option.emoji} ${option.role}`).join(' - ') || panel.description || 'No roles')}</span>
+        <small>${escapeHtml(panel.channel)} - ${escapeHtml(panel.source === 'existing' ? 'Existing message' : 'Bot message')} - ${escapeHtml(panel.panelId)}</small>
+      </div>
+      <div class="ticket-row-actions">
+        <span class="state-chip ${panel.removeOnUnreact ? 'is-on' : 'is-warn'}">${panel.removeOnUnreact ? 'Toggle' : 'Add only'}</span>
+        ${panel.url ? `<a class="secondary-button compact" href="${escapeAttribute(panel.url)}" target="_blank" rel="noreferrer">Open</a>` : ''}
+        <button class="secondary-button compact" type="button" data-role-react-edit="${escapeAttribute(panel.panelId)}">Edit</button>
+      </div>
+    </div>
+  `);
+
+  els.roleReactPanelList.innerHTML = rows.join('') || '<div class="empty-state">No reaction-role panels yet.</div>';
+
+  els.roleReactPanelList.querySelectorAll('[data-role-react-edit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const panel = (state.guildDetail?.roleReactionPanels || []).find((item) => item.panelId === button.dataset.roleReactEdit);
+      if (!panel) return;
+      fillRoleReactForm(panel);
+      els.roleReactForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showToast(`Editing ${panel.title || panel.panelId}.`);
     });
   });
 }

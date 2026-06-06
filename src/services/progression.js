@@ -6,46 +6,117 @@ const {
 } = require('discord.js');
 const { buildEmbed } = require('../embeds');
 const { isBotOwner } = require('../permissions');
-const cards = require('./cards');
+const profileCards = require('./profileCard');
 
 const XP_COOLDOWN_MS = 45 * 1000;
 const DAILY_COOLDOWN_MS = 20 * 60 * 60 * 1000;
 const DAILY_RESET_MS = 48 * 60 * 60 * 1000;
 
-const ACHIEVEMENTS = {
-  first_message: {
-    name: 'First Steps',
-    description: 'Sent the first tracked message.'
-  },
-  talkative: {
-    name: 'Talkative',
-    description: 'Sent 25 tracked messages.'
-  },
-  regular: {
-    name: 'Regular',
-    description: 'Sent 100 tracked messages.'
-  },
-  level_5: {
-    name: 'Level 5',
-    description: 'Reached level 5.'
-  },
-  level_10: {
-    name: 'Level 10',
-    description: 'Reached level 10.'
-  },
-  first_daily: {
-    name: 'Payday',
-    description: 'Claimed a daily reward.'
-  },
-  streak_7: {
-    name: 'Seven Day Streak',
-    description: 'Kept a 7 day daily streak.'
-  },
-  rich_1000: {
-    name: 'Stacked',
-    description: 'Reached 1,000 coins.'
-  }
-};
+const MESSAGE_ACHIEVEMENTS = [
+  { key: 'first_message', threshold: 1, name: 'First Steps', description: 'Sent the first tracked message.' },
+  { key: 'message_10', threshold: 10, name: 'Joining In', description: 'Sent 10 tracked messages.' },
+  { key: 'talkative', threshold: 25, name: 'Talkative', description: 'Sent 25 tracked messages.' },
+  { key: 'message_50', threshold: 50, name: 'Chatter', description: 'Sent 50 tracked messages.' },
+  { key: 'regular', threshold: 100, name: 'Regular', description: 'Sent 100 tracked messages.' },
+  { key: 'message_250', threshold: 250, name: 'Crowd Favorite', description: 'Sent 250 tracked messages.' },
+  { key: 'message_500', threshold: 500, name: 'Half Thousand', description: 'Sent 500 tracked messages.' },
+  { key: 'message_1000', threshold: 1000, name: 'Thousand Words', description: 'Sent 1,000 tracked messages.' },
+  { key: 'message_2500', threshold: 2500, name: 'Forum Fixture', description: 'Sent 2,500 tracked messages.' },
+  { key: 'message_5000', threshold: 5000, name: 'Channel Veteran', description: 'Sent 5,000 tracked messages.' },
+  { key: 'message_10000', threshold: 10000, name: 'Ten Thousand Club', description: 'Sent 10,000 tracked messages.' },
+  { key: 'message_25000', threshold: 25000, name: 'Server Voice', description: 'Sent 25,000 tracked messages.' },
+  { key: 'message_50000', threshold: 50000, name: 'Marathon Messenger', description: 'Sent 50,000 tracked messages.' },
+  { key: 'message_100000', threshold: 100000, name: 'Legendary Speaker', description: 'Sent 100,000 tracked messages.' }
+];
+
+const LEVEL_ACHIEVEMENTS = [
+  { key: 'level_2', threshold: 2, name: 'Level 2', description: 'Reached level 2.' },
+  { key: 'level_3', threshold: 3, name: 'Level 3', description: 'Reached level 3.' },
+  { key: 'level_5', threshold: 5, name: 'Level 5', description: 'Reached level 5.' },
+  { key: 'level_10', threshold: 10, name: 'Level 10', description: 'Reached level 10.' },
+  { key: 'level_15', threshold: 15, name: 'Level 15', description: 'Reached level 15.' },
+  { key: 'level_20', threshold: 20, name: 'Level 20', description: 'Reached level 20.' },
+  { key: 'level_25', threshold: 25, name: 'Level 25', description: 'Reached level 25.' },
+  { key: 'level_30', threshold: 30, name: 'Level 30', description: 'Reached level 30.' },
+  { key: 'level_40', threshold: 40, name: 'Level 40', description: 'Reached level 40.' },
+  { key: 'level_50', threshold: 50, name: 'Level 50', description: 'Reached level 50.' },
+  { key: 'level_60', threshold: 60, name: 'Level 60', description: 'Reached level 60.' },
+  { key: 'level_75', threshold: 75, name: 'Level 75', description: 'Reached level 75.' },
+  { key: 'level_100', threshold: 100, name: 'Level 100', description: 'Reached level 100.' },
+  { key: 'level_125', threshold: 125, name: 'Level 125', description: 'Reached level 125.' },
+  { key: 'level_150', threshold: 150, name: 'Level 150', description: 'Reached level 150.' },
+  { key: 'level_200', threshold: 200, name: 'Level 200', description: 'Reached level 200.' }
+];
+
+const XP_ACHIEVEMENTS = [
+  { key: 'xp_100', threshold: 100, name: 'XP Starter', description: 'Reached 100 XP.' },
+  { key: 'xp_500', threshold: 500, name: 'XP Collector', description: 'Reached 500 XP.' },
+  { key: 'xp_1000', threshold: 1000, name: 'XP Hoarder', description: 'Reached 1,000 XP.' },
+  { key: 'xp_2500', threshold: 2500, name: 'XP Grinder', description: 'Reached 2,500 XP.' },
+  { key: 'xp_5000', threshold: 5000, name: 'XP Specialist', description: 'Reached 5,000 XP.' },
+  { key: 'xp_10000', threshold: 10000, name: 'XP Champion', description: 'Reached 10,000 XP.' },
+  { key: 'xp_25000', threshold: 25000, name: 'XP Legend', description: 'Reached 25,000 XP.' },
+  { key: 'xp_50000', threshold: 50000, name: 'XP Master', description: 'Reached 50,000 XP.' },
+  { key: 'xp_100000', threshold: 100000, name: 'XP Titan', description: 'Reached 100,000 XP.' },
+  { key: 'xp_250000', threshold: 250000, name: 'XP Overlord', description: 'Reached 250,000 XP.' },
+  { key: 'xp_500000', threshold: 500000, name: 'XP Immortal', description: 'Reached 500,000 XP.' },
+  { key: 'xp_1000000', threshold: 1000000, name: 'XP Mythic', description: 'Reached 1,000,000 XP.' }
+];
+
+const COIN_ACHIEVEMENTS = [
+  { key: 'coins_100', threshold: 100, name: 'Pocket Change', description: 'Reached 100 coins.' },
+  { key: 'coins_500', threshold: 500, name: 'Coin Pouch', description: 'Reached 500 coins.' },
+  { key: 'rich_1000', threshold: 1000, name: 'Stacked', description: 'Reached 1,000 coins.' },
+  { key: 'coins_2500', threshold: 2500, name: 'Savings Plan', description: 'Reached 2,500 coins.' },
+  { key: 'coins_5000', threshold: 5000, name: 'Big Saver', description: 'Reached 5,000 coins.' },
+  { key: 'coins_10000', threshold: 10000, name: 'Money Bags', description: 'Reached 10,000 coins.' },
+  { key: 'coins_25000', threshold: 25000, name: 'Treasure Chest', description: 'Reached 25,000 coins.' },
+  { key: 'coins_50000', threshold: 50000, name: 'High Roller', description: 'Reached 50,000 coins.' },
+  { key: 'coins_100000', threshold: 100000, name: 'Fortune Builder', description: 'Reached 100,000 coins.' },
+  { key: 'coins_250000', threshold: 250000, name: 'Vault Keeper', description: 'Reached 250,000 coins.' },
+  { key: 'coins_500000', threshold: 500000, name: 'Server Tycoon', description: 'Reached 500,000 coins.' },
+  { key: 'coins_1000000', threshold: 1000000, name: 'Millionaire', description: 'Reached 1,000,000 coins.' }
+];
+
+const STREAK_ACHIEVEMENTS = [
+  { key: 'streak_2', threshold: 2, name: 'Back Tomorrow', description: 'Kept a 2 day daily streak.' },
+  { key: 'streak_3', threshold: 3, name: 'Three Day Habit', description: 'Kept a 3 day daily streak.' },
+  { key: 'streak_7', threshold: 7, name: 'Seven Day Streak', description: 'Kept a 7 day daily streak.' },
+  { key: 'streak_14', threshold: 14, name: 'Two Week Streak', description: 'Kept a 14 day daily streak.' },
+  { key: 'streak_30', threshold: 30, name: 'Monthly Regular', description: 'Kept a 30 day daily streak.' },
+  { key: 'streak_60', threshold: 60, name: 'Two Month Run', description: 'Kept a 60 day daily streak.' },
+  { key: 'streak_100', threshold: 100, name: 'Century Streak', description: 'Kept a 100 day daily streak.' },
+  { key: 'streak_180', threshold: 180, name: 'Half Year Grind', description: 'Kept a 180 day daily streak.' },
+  { key: 'streak_365', threshold: 365, name: 'Full Year Loyal', description: 'Kept a 365 day daily streak.' },
+  { key: 'streak_500', threshold: 500, name: 'Streak Royalty', description: 'Kept a 500 day daily streak.' },
+  { key: 'streak_1000', threshold: 1000, name: 'Daily Immortal', description: 'Kept a 1,000 day daily streak.' }
+];
+
+const SPECIAL_ACHIEVEMENTS = [
+  { key: 'first_daily', name: 'Payday', description: 'Claimed a daily reward.' }
+];
+
+const PROGRESS_ACHIEVEMENT_GROUPS = [
+  { field: 'messages', entries: MESSAGE_ACHIEVEMENTS },
+  { field: 'level', entries: LEVEL_ACHIEVEMENTS },
+  { field: 'xp', entries: XP_ACHIEVEMENTS },
+  { field: 'balance', entries: COIN_ACHIEVEMENTS },
+  { field: 'daily_streak', entries: STREAK_ACHIEVEMENTS }
+];
+
+const ACHIEVEMENTS = Object.fromEntries(
+  [
+    ...MESSAGE_ACHIEVEMENTS,
+    ...LEVEL_ACHIEVEMENTS,
+    ...XP_ACHIEVEMENTS,
+    ...COIN_ACHIEVEMENTS,
+    ...STREAK_ACHIEVEMENTS,
+    ...SPECIAL_ACHIEVEMENTS
+  ].map((achievement) => [achievement.key, {
+    name: achievement.name,
+    description: achievement.description
+  }])
+);
 
 function configBool(db, guildId, key, fallback = true) {
   const value = db.getConfig(guildId, key, fallback);
@@ -70,6 +141,23 @@ function xpForLevel(level) {
 
 function levelFromXp(xp) {
   return Math.floor(Math.sqrt(Math.max(0, Number(xp || 0)) / 120)) + 1;
+}
+
+function levelProgress(progress) {
+  const level = Math.max(1, Number(progress.level || 1));
+  const xp = Math.max(0, Number(progress.xp || 0));
+  const levelBaseXp = xpForLevel(level);
+  const nextLevelXp = xpForLevel(level + 1);
+  const neededXp = Math.max(1, nextLevelXp - levelBaseXp);
+  const currentXp = Math.max(0, Math.min(neededXp, xp - levelBaseXp));
+  return {
+    level,
+    xp,
+    levelBaseXp,
+    nextLevelXp,
+    currentXp,
+    neededXp
+  };
 }
 
 function randomInt(min, max) {
@@ -97,6 +185,22 @@ function normalizeRoleRewards(value) {
 
 function achievementInfo(key) {
   return ACHIEVEMENTS[key] || { name: key, description: 'Custom achievement.' };
+}
+
+function formatAchievementNames(keys, limit = 900) {
+  const names = keys.map((key) => achievementInfo(key).name);
+  let text = '';
+  for (let index = 0; index < names.length; index += 1) {
+    const separator = text ? ', ' : '';
+    const hidden = names.length - index - 1;
+    const suffix = hidden > 0 ? `, and ${hidden} more` : '';
+    const next = `${text}${separator}${names[index]}`;
+    if (`${next}${suffix}`.length > limit) {
+      return text ? `${text}, and ${hidden + 1} more` : `${hidden + 1} achievements`;
+    }
+    text = next;
+  }
+  return text;
 }
 
 async function awardMessageActivity(db, message) {
@@ -142,23 +246,15 @@ async function awardMessageActivity(db, message) {
 }
 
 function awardProgressAchievements(db, guildId, userId, progress) {
-  const checks = [
-    [progress.messages >= 1, 'first_message'],
-    [progress.messages >= 25, 'talkative'],
-    [progress.messages >= 100, 'regular'],
-    [progress.level >= 5, 'level_5'],
-    [progress.level >= 10, 'level_10'],
-    [progress.balance >= 1000, 'rich_1000'],
-    [progress.daily_streak >= 7, 'streak_7']
-  ];
-
-  return checks
-    .filter(([passed]) => passed)
-    .map(([, key]) => key)
+  return PROGRESS_ACHIEVEMENT_GROUPS
+    .flatMap(({ field, entries }) => entries
+      .filter((achievement) => Number(progress[field] || 0) >= achievement.threshold)
+      .map((achievement) => achievement.key))
     .filter((key) => db.addAchievement(guildId, userId, key));
 }
 
 async function sendAchievementNotice(db, message, keys) {
+  const names = formatAchievementNames(keys, 1000);
   const configuredChannel = db.getConfig(message.guild.id, 'achievement_channel') ||
     db.getConfig(message.guild.id, 'level_announce_channel');
   const channel = configuredChannel
@@ -167,13 +263,11 @@ async function sendAchievementNotice(db, message, keys) {
   if (!channel?.isTextBased()) return;
 
   const first = achievementInfo(keys[0]);
-  const names = keys.map((key) => achievementInfo(key).name).join(', ');
-  const imageName = `achievement-${message.author.id}.svg`;
-  const image = cards.achievementCard({
-    title: 'Achievement Unlocked!',
+  const imageName = `achievement-${message.author.id}.png`;
+  const image = achievementCardBuffer(message.author, {
     name: keys.length > 1 ? `${first.name} +${keys.length - 1}` : first.name,
     description: first.description,
-    rarity: keys.length > 1 ? 'MULTI' : 'RARE'
+    count: keys.length
   });
 
   await channel.send({
@@ -191,7 +285,7 @@ async function sendAchievementNotice(db, message, keys) {
       })
     ],
     files: [
-      new AttachmentBuilder(Buffer.from(image), { name: imageName })
+      new AttachmentBuilder(image, { name: imageName })
     ],
     components: [progressActionRow(message.author.id)],
     allowedMentions: { users: [message.author.id] }
@@ -205,12 +299,11 @@ async function sendLevelAnnouncement(db, message, progress, xpGain) {
     : message.channel;
   if (!channel?.isTextBased()) return;
 
-  const imageName = `level-${message.author.id}.svg`;
-  const image = cards.levelCard({
-    username: message.author.username || message.author.tag,
-    level: progress.level,
-    previousLevel: Math.max(0, Number(progress.level || 1) - 1)
-  });
+  const imageName = `level-${message.author.id}.png`;
+  const rank = typeof db.memberProgressRank === 'function'
+    ? db.memberProgressRank(message.guild.id, message.author.id, 'xp')
+    : null;
+  const image = levelCardBuffer(message.author, progress, rank);
 
   await channel.send({
     content: `${message.author} Has Reached Level ${progress.level}. GG!`,
@@ -227,7 +320,7 @@ async function sendLevelAnnouncement(db, message, progress, xpGain) {
       })
     ],
     files: [
-      new AttachmentBuilder(Buffer.from(image), { name: imageName })
+      new AttachmentBuilder(image, { name: imageName })
     ],
     components: [progressActionRow(message.author.id)],
     allowedMentions: { users: [message.author.id] }
@@ -284,8 +377,15 @@ async function handleProgressButton(db, interaction) {
     return;
   }
 
+  const rank = typeof db.memberProgressRank === 'function'
+    ? db.memberProgressRank(interaction.guild.id, targetUserId, 'xp')
+    : null;
+  const imageName = `profile-${targetUserId}.png`;
+  const embed = profileEmbed(db, interaction.guild, user, progress, achievements);
+  embed.setImage(`attachment://${imageName}`);
   await interaction.reply({
-    embeds: [profileEmbed(db, interaction.guild, user, progress, achievements)],
+    embeds: [embed],
+    files: [new AttachmentBuilder(profileCardBuffer(user, progress, achievements, rank), { name: imageName })],
     ephemeral: true
   });
 }
@@ -324,9 +424,51 @@ function listRoleRewards(db, guildId) {
   return normalizeRoleRewards(db.getConfig(guildId, 'role_level_rewards', []));
 }
 
+function displayName(user) {
+  return user?.globalName || user?.displayName || user?.username || user?.tag || user?.id || 'User';
+}
+
+function levelCardBuffer(user, progress, rank = null) {
+  const metrics = levelProgress(progress);
+  return profileCards.createLevelCard({
+    username: displayName(user),
+    level: metrics.level,
+    currentXp: metrics.currentXp,
+    neededXp: metrics.neededXp,
+    rank
+  });
+}
+
+function achievementCardBuffer(user, achievement, count = 1) {
+  return profileCards.createAchievementCard({
+    username: displayName(user),
+    name: achievement?.name || 'Achievement',
+    description: achievement?.description || 'Unlocked a new milestone',
+    count: achievement?.count || count
+  });
+}
+
+function profileCardBuffer(user, progress, achievements = [], rank = null) {
+  const metrics = levelProgress(progress);
+  return profileCards.createProfileCard({
+    username: displayName(user),
+    level: metrics.level,
+    currentXp: metrics.currentXp,
+    neededXp: metrics.neededXp,
+    rank,
+    messages: progress.messages || 0,
+    coins: progress.balance || 0,
+    dailyStreak: progress.daily_streak || 0,
+    achievements: achievements.length || 0
+  });
+}
+
 function profileEmbed(db, guild, user, progress, achievements = []) {
   const nextLevelXp = xpForLevel(Number(progress.level || 1) + 1);
-  const earned = achievements.map((row) => achievementInfo(row.key).name);
+  const earnedKeys = achievements.map((row) => row.key);
+  const earned = earnedKeys.length
+    ? `${formatAchievementNames(earnedKeys, 900)}\n${earnedKeys.length}/${Object.keys(ACHIEVEMENTS).length} earned`
+    : 'None yet';
   return buildEmbed(db, guild.id, {
     title: `${user.username || user.tag} Profile`,
     thumbnail: user.displayAvatarURL?.({ size: 128 }) || null,
@@ -336,7 +478,7 @@ function profileEmbed(db, guild, user, progress, achievements = []) {
       { name: 'Coins', value: String(progress.balance || 0), inline: true },
       { name: 'Messages', value: String(progress.messages || 0), inline: true },
       { name: 'Daily Streak', value: String(progress.daily_streak || 0), inline: true },
-      { name: 'Achievements', value: earned.length ? earned.join(', ') : 'None yet' }
+      { name: 'Achievements', value: earned }
     ],
     style: 'ocean'
   });
@@ -396,17 +538,75 @@ function claimDaily(db, guildId, userId) {
   };
 }
 
+function setMemberLevel(db, guildId, userId, level) {
+  const nextLevel = Math.max(1, Math.min(500, Number(level || 1)));
+  return db.setMemberProgress(guildId, userId, {
+    xp: xpForLevel(nextLevel),
+    level: nextLevel
+  });
+}
+
+function addMemberLevels(db, guildId, userId, amount) {
+  const current = db.ensureMemberProgress(guildId, userId);
+  return setMemberLevel(db, guildId, userId, Number(current.level || 1) + Math.max(1, Number(amount || 1)));
+}
+
+function removeMemberLevels(db, guildId, userId, amount) {
+  const current = db.ensureMemberProgress(guildId, userId);
+  return setMemberLevel(db, guildId, userId, Number(current.level || 1) - Math.max(1, Number(amount || 1)));
+}
+
+function resetMemberLevel(db, guildId, userId) {
+  return db.setMemberProgress(guildId, userId, {
+    xp: 0,
+    level: 1,
+    lastXpAt: null
+  });
+}
+
+function addCoins(db, guildId, userId, amount) {
+  const current = db.ensureMemberProgress(guildId, userId);
+  return db.setMemberProgress(guildId, userId, {
+    balance: Number(current.balance || 0) + Math.max(1, Number(amount || 1))
+  });
+}
+
+function removeCoins(db, guildId, userId, amount) {
+  const current = db.ensureMemberProgress(guildId, userId);
+  return db.setMemberProgress(guildId, userId, {
+    balance: Math.max(0, Number(current.balance || 0) - Math.max(1, Number(amount || 1)))
+  });
+}
+
+function resetCoins(db, guildId, userId) {
+  return db.setMemberProgress(guildId, userId, {
+    balance: 0
+  });
+}
+
 module.exports = {
   ACHIEVEMENTS,
+  achievementCardBuffer,
   addRoleReward,
+  addCoins,
+  addMemberLevels,
   applyLevelRoles,
   awardMessageActivity,
   claimDaily,
   handleProgressButton,
   leaderboardEmbed,
+  levelCardBuffer,
+  levelFromXp,
+  levelProgress,
   listRoleRewards,
   normalizeRoleRewards,
+  profileCardBuffer,
   profileEmbed,
+  removeCoins,
+  removeMemberLevels,
   removeRoleReward,
+  resetCoins,
+  resetMemberLevel,
+  setMemberLevel,
   xpForLevel
 };
