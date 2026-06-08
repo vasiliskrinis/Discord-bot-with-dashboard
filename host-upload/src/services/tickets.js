@@ -6,6 +6,7 @@ const {
   PermissionsBitField
 } = require('discord.js');
 const { buildEmbed, error, success, warning } = require('../embeds');
+const staff = require('./staff');
 
 const BUTTON_STYLES = {
   primary: ButtonStyle.Primary,
@@ -294,6 +295,9 @@ async function closeTicket(db, interaction) {
     return;
   }
   db.closeTicket(interaction.guild.id, interaction.channel.id);
+  if (staff.canUseStaffSystem(db, interaction.member)) {
+    staff.incrementStaffStat(db, interaction.guild.id, interaction.user.id, 'tickets');
+  }
   await interaction.reply({ embeds: [success(db, interaction.guild.id, 'Ticket closed.')] });
   if (interaction.channel.isThread?.()) {
     await interaction.channel.setArchived(true, 'Ticket closed').catch(() => null);

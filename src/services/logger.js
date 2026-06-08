@@ -5,6 +5,7 @@ const LOG_THEMES = {
   security: { title: 'Security', style: 'amber', tag: '[SEC]' },
   ai: { title: 'AI', style: 'violet', tag: '[AI]' },
   tickets: { title: 'Tickets', style: 'sapphire', tag: '[TICKET]' },
+  staff: { title: 'SWAT Staff', style: 'cyber', tag: '[SWAT]' },
   config: { title: 'Config', style: 'emerald', tag: '[CFG]' },
   errors: { title: 'Errors', style: 'ruby', tag: '[ERR]' },
   system: { title: 'System', style: 'royal', tag: '[SYS]' }

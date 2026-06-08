@@ -101,6 +101,11 @@ async function sendVerificationPanel(db, target, options = {}) {
 }
 
 async function handleVerifyButton(db, interaction) {
+  if (db.getActiveRestriction(interaction.guild.id, interaction.user.id)) {
+    await interaction.reply({ content: 'You are restricted and can not receive roles right now.', ephemeral: true });
+    return true;
+  }
+
   const roleId = db.getConfig(interaction.guild.id, 'verified_role');
   if (!roleId) {
     await interaction.reply({ content: 'Verification is not configured yet.', ephemeral: true });

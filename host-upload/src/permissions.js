@@ -24,7 +24,10 @@ function isConfiguredModerator(db, member) {
   const guildId = member.guild.id;
   const moderatorUsers = db.getConfig(guildId, 'moderator_users', []);
   const moderatorRoles = db.getConfig(guildId, 'moderator_roles', []);
-  return moderatorUsers.includes(member.id) || memberHasAnyRole(member, moderatorRoles);
+  const moderationCommandRoles = db.getConfig(guildId, 'moderation_command_roles', []);
+  return moderatorUsers.includes(member.id) ||
+    memberHasAnyRole(member, moderatorRoles) ||
+    memberHasAnyRole(member, moderationCommandRoles);
 }
 
 function isGuildAdmin(db, member) {
@@ -54,6 +57,29 @@ function canUseRestrictButtons(db, member) {
   return memberHasAnyRole(member, roles);
 }
 
+function isHeadOfOperations(db, member) {
+  if (!member?.guild) return false;
+  if (isBotOwner(member.id)) return true;
+  const roleId = db.getConfig(member.guild.id, 'head_of_operations_role');
+  return Boolean(roleId && member.roles.cache.has(roleId));
+}
+
+function canManageStaffSystem(db, member) {
+  if (!member?.guild) return false;
+  if (isBotOwner(member.id)) return true;
+  if (isHeadOfOperations(db, member)) return true;
+  if (isGuildAdmin(db, member)) return true;
+  return false;
+}
+
+function canUseStaffSystem(db, member) {
+  if (!member?.guild) return false;
+  if (canManageStaffSystem(db, member)) return true;
+  if (isGuildModerator(db, member)) return true;
+  const roles = db.getConfig(member.guild.id, 'staff_command_roles', []);
+  return memberHasAnyRole(member, roles);
+}
+
 function requireBotOwner(userId) {
   if (!isBotOwner(userId)) {
     throw new Error('Only the protected bot owner can use this.');
@@ -78,6 +104,18 @@ function requireRestrict(db, member) {
   }
 }
 
+function requireStaff(db, member) {
+  if (!canUseStaffSystem(db, member)) {
+    throw new Error('You need a configured Command Staff role or bot owner access.');
+  }
+}
+
+function requireStaffManager(db, member) {
+  if (!canManageStaffSystem(db, member)) {
+    throw new Error('You need the configured Head Of Operations role, dashboard admin access, or bot owner access.');
+  }
+}
+
 function manageable(member, targetMember) {
   if (!member?.guild || !targetMember?.guild) return false;
   if (isBotOwner(targetMember.id)) return false;
@@ -94,9 +132,14 @@ module.exports = {
   isGuildModerator,
   canRestrict,
   canUseRestrictButtons,
+  isHeadOfOperations,
+  canManageStaffSystem,
+  canUseStaffSystem,
   requireBotOwner,
   requireAdmin,
   requireModerator,
   requireRestrict,
+  requireStaff,
+  requireStaffManager,
   manageable
 };

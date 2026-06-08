@@ -20,13 +20,14 @@ const env = require('./env');
 const { DEFAULT_GUILD_CONFIG } = require('./db');
 const { buildEmbed, error, success, EMBED_STYLES } = require('./embeds');
 const { parseDuration, formatDuration } = require('./time');
-const { isBotOwner, requireAdmin, requireBotOwner, requireModerator, requireRestrict } = require('./permissions');
+const { canUseStaffSystem, isBotOwner, requireAdmin, requireBotOwner, requireModerator, requireRestrict } = require('./permissions');
 const restrictions = require('./services/restrictions');
 const tickets = require('./services/tickets');
 const games = require('./services/games');
 const progression = require('./services/progression');
 const community = require('./services/community');
 const swat = require('./services/swat');
+const staff = require('./services/staff');
 const { createEmbedFromAI } = require('./services/ai');
 const inviteRoles = require('./services/inviteRoles');
 const { moderationLog } = require('./services/logger');
@@ -373,12 +374,24 @@ const SERVER_ADMIN_COMMANDS = new Set([
   'server-rename'
 ]);
 
-const DANGEROUS_COMMANDS = new Set([
+const MODERATION_COMMANDS = new Set([
   'ban',
   'unban',
   'kick',
+  'mute',
+  'unmute',
+  'warn',
+  'unwarn',
+  'warnings',
   'softban',
   'mass-ban',
+  'ban-list',
+  'note',
+  'history',
+  'case'
+]);
+
+const DANGEROUS_COMMANDS = new Set([
   'lockdown',
   'unlockdown',
   'give-role',
@@ -406,7 +419,23 @@ const DANGEROUS_COMMANDS = new Set([
   'swat-name'
 ]);
 
+const STAFF_ACCESS_COMMANDS = new Set([
+  'staff',
+  'duty',
+  'loa',
+  'promote',
+  'demote',
+  'rank',
+  'ia',
+  'incident'
+]);
+
 function requireCommandAccess(db, member, command) {
+  if (MODERATION_COMMANDS.has(command)) {
+    requireModerator(db, member);
+    return;
+  }
+  if (STAFF_ACCESS_COMMANDS.has(command) && canUseStaffSystem(db, member)) return;
   if (DANGEROUS_COMMANDS.has(command)) requireAdmin(db, member);
   else requireModerator(db, member);
 }
@@ -509,11 +538,216 @@ function serverAdminSlashCommands() {
   ];
 }
 
+function staffSlashCommands() {
+  return [
+    new SlashCommandBuilder()
+      .setName('staff')
+      .setDescription('Operations Command staff center.')
+      .addSubcommand((sub) => sub.setName('apply').setDescription('File an Operations Command staff application.'))
+      .addSubcommand((sub) => sub.setName('requirements').setDescription('Show Operations Command staff requirements.'))
+      .addSubcommand((sub) => sub.setName('applications').setDescription('Show the staff review queue.'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('review')
+          .setDescription('Review a staff application file.')
+          .addIntegerOption((option) => option.setName('application_id').setDescription('Application file ID.').setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('accept')
+          .setDescription('Accept a staff application.')
+          .addIntegerOption((option) => option.setName('application_id').setDescription('Application file ID.').setRequired(true))
+          .addStringOption((option) => option.setName('notes').setDescription('Optional Command Staff review notes.').setMaxLength(900))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('deny')
+          .setDescription('Deny a staff application.')
+          .addIntegerOption((option) => option.setName('application_id').setDescription('Application file ID.').setRequired(true))
+          .addStringOption((option) => option.setName('notes').setDescription('Optional Command Staff review notes.').setMaxLength(900))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('stats')
+          .setDescription('Show a staff dossier.')
+          .addUserOption((option) => option.setName('user').setDescription('Staff member.'))
+      )
+      .addSubcommand((sub) => sub.setName('leaderboard').setDescription('Show the Operations Command leaderboard.'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('event')
+          .setDescription('Record a hosted staff event.')
+          .addUserOption((option) => option.setName('user').setDescription('Host.'))
+          .addStringOption((option) => option.setName('title').setDescription('Event title or note.').setMaxLength(500))
+      )
+      .addSubcommand((sub) => sub.setName('awards').setDescription('List available staff awards.'))
+      .addSubcommandGroup((group) =>
+        group
+          .setName('award')
+          .setDescription('Manage staff awards.')
+          .addSubcommand((sub) =>
+            sub
+              .setName('give')
+              .setDescription('Give a staff award.')
+              .addUserOption((option) => option.setName('user').setDescription('Staff member.').setRequired(true))
+              .addStringOption((option) => option.setName('award').setDescription('Award.').setRequired(true).addChoices(...staff.staffAwardChoices()))
+              .addStringOption((option) => option.setName('reason').setDescription('Reason.').setRequired(true).setMaxLength(900))
+          )
+          .addSubcommand((sub) => sub.setName('leaderboard').setDescription('Show the staff award leaderboard.'))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('duty')
+      .setDescription('Manage Duty Status.')
+      .addSubcommand((sub) => sub.setName('on').setDescription('Mark yourself On Duty.'))
+      .addSubcommand((sub) => sub.setName('off').setDescription('Mark yourself Off Duty.'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('stats')
+          .setDescription('Show Duty Status statistics.')
+          .addUserOption((option) => option.setName('user').setDescription('Staff member.'))
+          .addStringOption((option) => option.setName('period').setDescription('Stats period.').addChoices(
+            { name: 'Weekly', value: 'week' },
+            { name: 'Monthly', value: 'month' },
+            { name: 'All Time', value: 'all' }
+          ))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('loa')
+      .setDescription('Manage Leave Of Absence records.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('request')
+          .setDescription('Request Leave Of Absence from Operations Command.')
+          .addStringOption((option) => option.setName('reason').setDescription('LOA reason.').setRequired(true).setMaxLength(1000))
+          .addStringOption((option) => option.setName('duration').setDescription('Optional duration like 3d, 1w, 12h.'))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('approve')
+          .setDescription('Approve a Leave Of Absence request.')
+          .addIntegerOption((option) => option.setName('loa_id').setDescription('LOA ID.').setRequired(true))
+          .addStringOption((option) => option.setName('notes').setDescription('Review notes.').setMaxLength(900))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('deny')
+          .setDescription('Deny a Leave Of Absence request.')
+          .addIntegerOption((option) => option.setName('loa_id').setDescription('LOA ID.').setRequired(true))
+          .addStringOption((option) => option.setName('notes').setDescription('Review notes.').setMaxLength(900))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('end')
+          .setDescription('End your current LOA or a staff member LOA.')
+          .addIntegerOption((option) => option.setName('loa_id').setDescription('LOA ID. Required only when ending someone else.'))
+          .addStringOption((option) => option.setName('notes').setDescription('Closure notes.').setMaxLength(900))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('list')
+          .setDescription('Show the Leave Of Absence roster.')
+          .addStringOption((option) => option.setName('status').setDescription('Status filter.').addChoices(
+            { name: 'Pending', value: 'Pending' },
+            { name: 'Approved', value: 'Approved' },
+            { name: 'Denied', value: 'Denied' },
+            { name: 'Ended', value: 'Ended' },
+            { name: 'All', value: 'All' }
+          ))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('promote')
+      .setDescription('Promote a staff member through the Chain of Command.')
+      .addUserOption((option) => option.setName('user').setDescription('Staff member.').setRequired(true))
+      .addStringOption((option) => option.setName('reason').setDescription('Promotion reason.').setRequired(true).setMaxLength(900)),
+
+    new SlashCommandBuilder()
+      .setName('demote')
+      .setDescription('Demote a staff member through the Chain of Command.')
+      .addUserOption((option) => option.setName('user').setDescription('Staff member.').setRequired(true))
+      .addStringOption((option) => option.setName('reason').setDescription('Demotion reason.').setRequired(true).setMaxLength(900)),
+
+    new SlashCommandBuilder()
+      .setName('rank')
+      .setDescription('View Chain of Command records.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('history')
+          .setDescription('Show staff rank history.')
+          .addUserOption((option) => option.setName('user').setDescription('Staff member.').setRequired(true))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('history')
+      .setDescription('Show staff-only moderation history for a member.')
+      .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true)),
+
+    new SlashCommandBuilder()
+      .setName('ia')
+      .setDescription('Internal Affairs case work.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('report')
+          .setDescription('Report staff misconduct to Internal Affairs.')
+          .addUserOption((option) => option.setName('staff').setDescription('Reported staff member.').setRequired(true))
+          .addStringOption((option) => option.setName('summary').setDescription('Misconduct summary.').setRequired(true).setMaxLength(1500))
+          .addStringOption((option) => option.setName('evidence').setDescription('Evidence links or details.').setMaxLength(1000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('investigate')
+          .setDescription('Assign an Internal Affairs investigator.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('IA case ID.').setRequired(true))
+          .addUserOption((option) => option.setName('investigator').setDescription('Investigator.'))
+          .addStringOption((option) => option.setName('notes').setDescription('Investigation notes.').setMaxLength(1000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('close')
+          .setDescription('Close an Internal Affairs case.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('IA case ID.').setRequired(true))
+          .addStringOption((option) => option.setName('outcome').setDescription('Case outcome.').setRequired(true).setMaxLength(1500))
+          .addStringOption((option) => option.setName('notes').setDescription('Closure notes.').setMaxLength(1000))
+      ),
+
+    new SlashCommandBuilder()
+      .setName('incident')
+      .setDescription('Official Incident Report workflow.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('create')
+          .setDescription('Create an official Incident Report.')
+          .addStringOption((option) => option.setName('title').setDescription('Incident title.').setRequired(true).setMaxLength(120))
+          .addStringOption((option) => option.setName('summary').setDescription('Incident summary.').setRequired(true).setMaxLength(1500))
+          .addStringOption((option) => option.setName('involved_users').setDescription('User mentions or IDs separated by spaces.').setMaxLength(1000))
+          .addStringOption((option) => option.setName('evidence').setDescription('Evidence link or details.').setMaxLength(1000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('evidence')
+          .setDescription('Add evidence to an Incident Report.')
+          .addIntegerOption((option) => option.setName('incident_id').setDescription('Incident Report ID.').setRequired(true))
+          .addStringOption((option) => option.setName('evidence').setDescription('Evidence link or details.').setRequired(true).setMaxLength(1000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('close')
+          .setDescription('Close an Incident Report.')
+          .addIntegerOption((option) => option.setName('incident_id').setDescription('Incident Report ID.').setRequired(true))
+          .addStringOption((option) => option.setName('outcome').setDescription('Official outcome.').setRequired(true).setMaxLength(1500))
+      )
+  ];
+}
+
 function slashCommands() {
   const commands = [
     new SlashCommandBuilder()
       .setName('setup')
       .setDescription('Open the organized setup menu for this server.'),
+
+    ...staffSlashCommands(),
 
     new SlashCommandBuilder()
       .setName('restrict')
@@ -632,13 +866,13 @@ function slashCommands() {
 
     new SlashCommandBuilder()
       .setName('note')
-      .setDescription('Add or show moderator notes.')
-      .addStringOption((option) => option.setName('action').setDescription('add/list').setRequired(true).addChoices(
-        { name: 'add', value: 'add' },
-        { name: 'list', value: 'list' }
-      ))
-      .addUserOption((option) => option.setName('user').setDescription('User.').setRequired(true))
-      .addStringOption((option) => option.setName('note').setDescription('Note text.')),
+      .setDescription('Add or show internal staff notes.')
+      .addUserOption((option) => option.setName('user').setDescription('Member.').setRequired(true))
+      .addStringOption((option) => option.setName('note').setDescription('Internal note text.').setMaxLength(1000))
+      .addStringOption((option) => option.setName('action').setDescription('Add or list notes.').addChoices(
+        { name: 'Add', value: 'add' },
+        { name: 'List', value: 'list' }
+      )),
 
     new SlashCommandBuilder()
       .setName('slowmode')
@@ -757,25 +991,59 @@ function slashCommands() {
 
     new SlashCommandBuilder()
       .setName('case')
-      .setDescription('Show, change, or delete moderation cases.')
+      .setDescription('Manage SWAT Case Files and legacy moderation cases.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('create')
+          .setDescription('Create a SWAT Case File.')
+          .addStringOption((option) => option.setName('title').setDescription('Case File title.').setRequired(true).setMaxLength(120))
+          .addUserOption((option) => option.setName('target').setDescription('Subject or involved member.'))
+          .addStringOption((option) => option.setName('priority').setDescription('Case priority.').addChoices(
+            { name: 'Low', value: 'Low' },
+            { name: 'Medium', value: 'Medium' },
+            { name: 'High', value: 'High' },
+            { name: 'Critical', value: 'Critical' }
+          ))
+          .addStringOption((option) => option.setName('notes').setDescription('Case notes.').setMaxLength(1000))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('assign')
+          .setDescription('Assign a SWAT Case File to a staff member.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Case File ID.').setRequired(true))
+          .addUserOption((option) => option.setName('staff').setDescription('Assigned staff member.').setRequired(true))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('close')
+          .setDescription('Close a SWAT Case File.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Case File ID.').setRequired(true))
+          .addStringOption((option) => option.setName('outcome').setDescription('Case outcome.').setRequired(true).setMaxLength(1500))
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('view')
+          .setDescription('View a SWAT Case File.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Case File ID.').setRequired(true))
+      )
       .addSubcommand((sub) =>
         sub
           .setName('show')
-          .setDescription('Show a case.')
-          .addIntegerOption((option) => option.setName('case_id').setDescription('Case ID.').setRequired(true))
+          .setDescription('Show a legacy moderation case.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Moderation case ID.').setRequired(true))
       )
       .addSubcommand((sub) =>
         sub
           .setName('change')
-          .setDescription('Change a case reason.')
-          .addIntegerOption((option) => option.setName('case_id').setDescription('Case ID.').setRequired(true))
+          .setDescription('Change a legacy moderation case reason.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Moderation case ID.').setRequired(true))
           .addStringOption((option) => option.setName('reason').setDescription('New reason.').setRequired(true))
       )
       .addSubcommand((sub) =>
         sub
           .setName('delete')
-          .setDescription('Delete a case.')
-          .addIntegerOption((option) => option.setName('case_id').setDescription('Case ID.').setRequired(true))
+          .setDescription('Delete a legacy moderation case.')
+          .addIntegerOption((option) => option.setName('case_id').setDescription('Moderation case ID.').setRequired(true))
       ),
 
     new SlashCommandBuilder().setName('ban-list').setDescription('Show banned users.'),
@@ -1065,6 +1333,18 @@ async function reply(target, payload, ephemeral = false) {
     return target.reply(body);
   }
   return target.reply(payload);
+}
+
+function afkEnabledPayload(user, reason) {
+  return {
+    content: `✅ ${user}: You're now AFK with the status: **${safeInlineText(reason || 'AFK')}**`,
+    allowedMentions: { parse: [] }
+  };
+}
+
+function safeInlineText(value, max = 1800) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
 function splitArgs(input) {
@@ -1743,6 +2023,51 @@ async function handleSlash(interaction, db, client) {
         break;
       }
 
+      case 'staff': {
+        await staff.handleStaffSlash(interaction, db);
+        break;
+      }
+
+      case 'duty': {
+        await staff.handleDutySlash(interaction, db);
+        break;
+      }
+
+      case 'loa': {
+        await staff.handleLoaSlash(interaction, db);
+        break;
+      }
+
+      case 'promote': {
+        await staff.handlePromotionSlash(interaction, db, 'promote');
+        break;
+      }
+
+      case 'demote': {
+        await staff.handlePromotionSlash(interaction, db, 'demote');
+        break;
+      }
+
+      case 'rank': {
+        await staff.handleRankSlash(interaction, db);
+        break;
+      }
+
+      case 'history': {
+        await staff.handleHistorySlash(interaction, db);
+        break;
+      }
+
+      case 'ia': {
+        await staff.handleIaSlash(interaction, db);
+        break;
+      }
+
+      case 'incident': {
+        await staff.handleIncidentSlash(interaction, db);
+        break;
+      }
+
       case 'restrict': {
         requireRestrict(db, interaction.member);
         const member = getTargetMemberFromSlash(interaction);
@@ -1794,7 +2119,7 @@ async function handleSlash(interaction, db, client) {
       case 'afk': {
         const reason = interaction.options.getString('reason') || 'AFK';
         db.setAfk(interaction.guild.id, interaction.user.id, reason);
-        await reply(interaction, { embeds: [success(db, interaction.guild.id, `You are now AFK: ${reason}`)] }, true);
+        await reply(interaction, afkEnabledPayload(interaction.user, reason));
         break;
       }
 
@@ -1991,6 +2316,7 @@ async function handleModerationSlash(interaction, db, client) {
     await interaction.guild.members.ban(user.id, { reason });
     const caseId = db.createCase(interaction.guild.id, 'BAN', user.id, interaction.user.id, reason);
     await moderationLog(db, interaction.guild, caseId, 'Ban', user, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, user.id, interaction.user.id, 'BAN', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${user} banned. Case #${caseId}.`)] });
     return;
   }
@@ -2001,6 +2327,7 @@ async function handleModerationSlash(interaction, db, client) {
     await interaction.guild.members.unban(userId, reason);
     const caseId = db.createCase(interaction.guild.id, 'UNBAN', userId, interaction.user.id, reason);
     await moderationLog(db, interaction.guild, caseId, 'Unban', { id: userId, toString: () => userId }, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, userId, interaction.user.id, 'UNBAN', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${userId} unbanned. Case #${caseId}.`)] });
     return;
   }
@@ -2012,6 +2339,7 @@ async function handleModerationSlash(interaction, db, client) {
     await member.kick(reason);
     const caseId = db.createCase(interaction.guild.id, 'KICK', member.id, interaction.user.id, reason);
     await moderationLog(db, interaction.guild, caseId, 'Kick', member.user, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, member.id, interaction.user.id, 'KICK', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${member.user} kicked. Case #${caseId}.`)] });
     return;
   }
@@ -2027,6 +2355,7 @@ async function handleModerationSlash(interaction, db, client) {
     await moderationLog(db, interaction.guild, caseId, 'Mute', member.user, interaction.user, reason, [
       { name: 'Duration', value: formatDuration(duration), inline: true }
     ]);
+    staff.recordModerationHistory(db, interaction.guild, member.id, interaction.user.id, 'TIMEOUT', { reason, durationMs: duration, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${member} muted for ${formatDuration(duration)}. Case #${caseId}.`)] });
     return;
   }
@@ -2037,6 +2366,7 @@ async function handleModerationSlash(interaction, db, client) {
     await member.timeout(null, reason);
     const caseId = db.createCase(interaction.guild.id, 'UNMUTE', member.id, interaction.user.id, reason);
     await moderationLog(db, interaction.guild, caseId, 'Unmute', member.user, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, member.id, interaction.user.id, 'UNTIMEOUT', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${member} unmuted. Case #${caseId}.`)] });
     return;
   }
@@ -2048,6 +2378,7 @@ async function handleModerationSlash(interaction, db, client) {
     const caseId = db.createCase(interaction.guild.id, 'WARN', member.id, interaction.user.id, reason);
     db.addWarning(interaction.guild.id, member.id, interaction.user.id, reason, caseId);
     await moderationLog(db, interaction.guild, caseId, 'Warn', member.user, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, member.id, interaction.user.id, 'WARN', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${member} warned. Case #${caseId}.`)] });
     return;
   }
@@ -2085,6 +2416,7 @@ async function handleModerationSlash(interaction, db, client) {
     await interaction.guild.members.unban(user.id, 'Softban complete');
     const caseId = db.createCase(interaction.guild.id, 'SOFTBAN', user.id, interaction.user.id, reason);
     await moderationLog(db, interaction.guild, caseId, 'Softban', user, interaction.user, reason);
+    staff.recordModerationHistory(db, interaction.guild, user.id, interaction.user.id, 'SOFTBAN', { reason, metadata: { caseId } });
     await reply(interaction, { embeds: [success(db, interaction.guild.id, `${user} softbanned. Case #${caseId}.`)] });
     return;
   }
@@ -2124,6 +2456,11 @@ async function handleModerationSlash(interaction, db, client) {
 async function handleUtilitySlash(interaction, db, client) {
   const name = interaction.commandName;
 
+  if (name === 'case') {
+    await staff.handleStaffCaseSlash(interaction, db, handleCaseSlash);
+    return;
+  }
+
   if (!['userinfo', 'snipe', 'first-message'].includes(name)) {
     requireCommandAccess(db, interaction.member, name);
   }
@@ -2156,26 +2493,7 @@ async function handleUtilitySlash(interaction, db, client) {
   }
 
   if (name === 'note') {
-    const action = interaction.options.getString('action');
-    const user = interaction.options.getUser('user');
-    if (action === 'add') {
-      assertNotProtectedOwner(user.id);
-      const note = interaction.options.getString('note');
-      if (!note) throw new Error('Note text is required.');
-      db.addNote(interaction.guild.id, user.id, interaction.user.id, note);
-      await reply(interaction, { embeds: [success(db, interaction.guild.id, `Note added for ${user}.`)] }, true);
-      return;
-    }
-    const notes = db.listNotes(interaction.guild.id, user.id);
-    await reply(interaction, {
-      embeds: [
-        buildEmbed(db, interaction.guild.id, {
-          title: `Notes for ${user.tag}`,
-          description: notes.length ? notes.map((entry) => `<t:${Math.floor(entry.created_at / 1000)}:d> ${entry.note}`).join('\n') : 'No notes.',
-          style: 'royal'
-        })
-      ]
-    }, true);
+    await staff.handleNoteSlash(interaction, db);
     return;
   }
 
@@ -2339,9 +2657,6 @@ async function handleUtilitySlash(interaction, db, client) {
     return;
   }
 
-  if (name === 'case') {
-    await handleCaseSlash(interaction, db);
-  }
 }
 
 async function handleGiveawaySlash(interaction, db) {
@@ -3495,9 +3810,19 @@ const HELP_SECTIONS = [
     label: 'Moderation',
     lines: [
       '`restrict`, `unrestrict`, `ban`, `kick`, `mute`, `unmute`, `warn`, `unwarn`, `warnings`',
-      '`purge`, `slowmode`, `softban`, `mass-ban`, `ban-list`, `case`, `note`',
+      '`purge`, `slowmode`, `softban`, `mass-ban`, `ban-list`, `case`, `note`, `history`',
       '`channel-restriction`, `mass-sync-categories`, `lock`, `unlock`, `lockdown`, `unlockdown`',
       '`channel-create`, `channel-rename`, `channel-delete`, `channel-update`, `category-create`, `category-rename`, `category-delete`'
+    ]
+  },
+  {
+    id: 'staff',
+    label: 'SWAT Staff',
+    lines: [
+      '`/staff apply`, `/staff requirements`, `/staff applications`, `/staff review`, `/staff accept`, `/staff deny`',
+      '`/duty on`, `/duty off`, `/duty stats`, `/loa request`, `/loa approve`, `/staff stats`, `/staff leaderboard`, `/staff event`',
+      '`/promote`, `/demote`, `/rank history`, `/ia report`, `/ia investigate`, `/ia close`',
+      '`/case create`, `/case assign`, `/case close`, `/case view`, `/incident create`, `/incident evidence`, `/incident close`, `/staff award give`'
     ]
   },
   {
@@ -4390,8 +4715,9 @@ async function handlePrefixCommand(message, db, client, command, args) {
     return;
   }
   if (command === 'afk') {
-    db.setAfk(message.guild.id, message.author.id, reasonOr(args, 'AFK'));
-    await message.reply({ embeds: [success(db, message.guild.id, 'AFK enabled.')] });
+    const reason = reasonOr(args, 'AFK');
+    db.setAfk(message.guild.id, message.author.id, reason);
+    await message.reply(afkEnabledPayload(message.author, reason));
     return;
   }
 

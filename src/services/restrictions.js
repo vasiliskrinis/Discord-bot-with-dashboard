@@ -19,6 +19,51 @@ function visibleRoleIds(member, restrictedRoleId) {
     .map((role) => role.id);
 }
 
+function restrictedRoleGuardTargets(member, restrictedRoleId) {
+  const extraRoles = member.roles.cache
+    .filter((role) => role.id !== member.guild.id && role.id !== restrictedRoleId && !role.managed);
+  const removable = extraRoles
+    .filter((role) => role.editable !== false)
+    .map((role) => role.id);
+  const blocked = extraRoles
+    .filter((role) => role.editable === false)
+    .map((role) => role.id);
+  return { removable, blocked };
+}
+
+async function enforceRestrictedRoles(db, member, reason = 'Restricted member role guard') {
+  if (!member?.guild) return { active: false, changed: false, removed: [], blocked: [], restrictedRoleAdded: false };
+  const restriction = db.getActiveRestriction(member.guild.id, member.id);
+  if (!restriction) return { active: false, changed: false, removed: [], blocked: [], restrictedRoleAdded: false };
+
+  const restrictedRoleId = db.getConfig(member.guild.id, 'restricted_role');
+  if (!restrictedRoleId) return { active: true, changed: false, removed: [], blocked: [], restrictedRoleAdded: false };
+
+  const restrictedRole = await member.guild.roles.fetch(restrictedRoleId).catch(() => null);
+  if (!restrictedRole) return { active: true, changed: false, removed: [], blocked: [], restrictedRoleAdded: false };
+
+  const { removable, blocked } = restrictedRoleGuardTargets(member, restrictedRoleId);
+  let restrictedRoleAdded = false;
+
+  if (!member.roles.cache.has(restrictedRoleId)) {
+    restrictedRoleAdded = await member.roles.add(restrictedRoleId, reason)
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  if (removable.length) {
+    await member.roles.remove(removable, reason);
+  }
+
+  return {
+    active: true,
+    changed: restrictedRoleAdded || removable.length > 0,
+    removed: removable,
+    blocked,
+    restrictedRoleAdded
+  };
+}
+
 async function restrictMember(db, guild, member, moderator, options = {}) {
   if (!member) throw new Error('Member not found.');
   if (env.botOwnerId && member.id === env.botOwnerId) {
@@ -104,11 +149,40 @@ async function deleteRecentMessagesFromUser(channel, userId) {
   return deleted?.size || 0;
 }
 
+function restrictReviewMentions(db, guildId) {
+  const roles = db.getConfig(guildId, 'authorized_roles', []);
+  const fallbackRole = db.getConfig(guildId, 'restrict_perms_role');
+  const configuredRoles = Array.isArray(roles) ? roles : [];
+  const roleIds = configuredRoles.length ? configuredRoles : [fallbackRole].filter(Boolean);
+  return {
+    content: roleIds.length ? roleIds.map((roleId) => `<@&${roleId}>`).join(' ') : undefined,
+    allowedMentions: roleIds.length ? { roles: roleIds, users: [], parse: [] } : { parse: [] }
+  };
+}
+
+function restrictionTriggerText(db, guild, source) {
+  if (source === 'restrict-channel') {
+    const channelId = db.getConfig(guild.id, 'restrict_channel');
+    return channelId ? `Message in <#${channelId}>` : 'Message in restrict channel';
+  }
+  if (source === 'command') return 'Slash command';
+  if (source === 'prefix') return 'Prefix command';
+  if (source === 'anti-raid') return 'Anti-raid automation';
+  return source || 'Manual review';
+}
+
+function memberIdentity(member) {
+  return `${member.user}\n${member.user.tag}\n\`${member.id}\``;
+}
+
 async function sendRestrictLog(db, guild, member, moderator, caseId, reason, source, lastMessage) {
   const channelId = db.getConfig(guild.id, 'restrict_logs_channel');
   if (!channelId) return null;
   const channel = await guild.channels.fetch(channelId).catch(() => null);
   if (!channel?.isTextBased()) return null;
+  const restriction = db.getActiveRestriction(guild.id, member.id);
+  const removedCount = restriction?.original_roles?.length || 0;
+  const reviewPing = restrictReviewMentions(db, guild.id);
 
   const rows = [
     new ActionRowBuilder().addComponents(
@@ -122,7 +196,7 @@ async function sendRestrictLog(db, guild, member, moderator, caseId, reason, sou
         .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId(`restrict:past:${member.id}`)
-        .setLabel('Past Logs')
+        .setLabel('History')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(`restrict:review:${member.id}`)
@@ -132,20 +206,31 @@ async function sendRestrictLog(db, guild, member, moderator, caseId, reason, sou
   ];
 
   return channel.send({
+    content: reviewPing.content,
     embeds: [
       buildEmbed(db, guild.id, {
-        title: `Restrict Log - Case #${caseId}`,
-        style: source === 'restrict-channel' ? 'amber' : 'ruby',
+        author: {
+          name: 'Restriction Review Queue',
+          iconURL: member.user.displayAvatarURL({ size: 64 })
+        },
+        title: 'Restriction review required',
+        icon: '🧾',
+        description: 'Accept or decline this restriction in a separate decision log after reviewing the evidence.',
+        thumbnail: member.user.displayAvatarURL({ size: 128 }),
+        style: 'amber',
+        footer: `Case #${caseId}`,
         fields: [
-          { name: 'Member', value: `${member.user} (${member.id})`, inline: true },
-          { name: 'Moderator', value: moderator ? `${moderator}` : 'System', inline: true },
-          { name: 'Source', value: source || 'command', inline: true },
-          { name: 'Reason', value: reason || 'No reason provided' },
-          { name: 'Message', value: lastMessage || 'No captured message' }
+          { name: 'Member', value: memberIdentity(member), inline: true },
+          { name: 'Trigger', value: restrictionTriggerText(db, guild, source), inline: true },
+          { name: 'Status', value: 'pending', inline: true },
+          { name: 'Initial Reason', value: reason || 'No reason provided' },
+          { name: 'Roles Removed', value: String(removedCount) },
+          { name: 'Deleted Message Content', value: lastMessage || 'No text content' }
         ]
       })
     ],
-    components: rows
+    components: rows,
+    allowedMentions: reviewPing.allowedMentions
   });
 }
 
@@ -165,23 +250,38 @@ function makeReasonModal(action, userId, messageId) {
     );
 }
 
+function moderatorIdentity(moderator) {
+  const user = moderator?.user || moderator;
+  if (!user) return 'System';
+  return `${user}\n${user.tag || 'system'}\n\`${user.id || 'system'}\``;
+}
+
+function appealsText(db, guildId) {
+  const channelId = db.getConfig(guildId, 'restriction_appeals_channel');
+  return channelId ? `<#${channelId}>` : 'Open a ticket';
+}
+
 function buildRestrictionDecisionEmbed(db, guildId, member, moderator, action, reason, caseId, restoredRoles = []) {
   const accepted = action === 'accept';
+  const signedBy = moderator?.user || moderator;
+  const appeals = appealsText(db, guildId);
   return buildEmbed(db, guildId, {
-    title: accepted ? 'User Restricted' : 'User Unrestricted',
+    author: {
+      name: 'Restriction Decision',
+      iconURL: member.user.displayAvatarURL({ size: 64 })
+    },
+    title: accepted ? 'Restriction accepted' : 'Restriction declined',
+    icon: accepted ? '✅' : '↩️',
+    description: `${member.user} ${accepted ? 'has been restricted.' : 'has been cleared from restriction.'}\nReason: ${reason || 'No reason provided'}\nSigned by: ${signedBy || 'System'}\nAppeals: ${appeals}`,
+    thumbnail: member.user.displayAvatarURL({ size: 128 }),
     style: accepted ? 'ruby' : 'emerald',
+    footer: caseId ? `Case #${caseId}` : undefined,
     fields: [
-      { name: 'Member', value: `${member.user} (${member.id})`, inline: true },
-      { name: 'Moderator', value: `${moderator.user} (${moderator.id})`, inline: true },
-      { name: 'Decision', value: accepted ? 'Accepted - user remains restricted' : 'Declined - roles restored and user unrestricted' },
-      { name: 'Reason', value: reason || 'No reason provided' },
-      { name: 'Case', value: caseId ? `#${caseId}` : 'No case', inline: true },
-      {
-        name: 'Restored Roles',
-        value: restoredRoles.length ? restoredRoles.map((roleId) => `<@&${roleId}>`).join(', ') : (accepted ? 'Still restricted' : 'None'),
-        inline: true
-      }
-    ]
+      { name: '🎯 Member', value: memberIdentity(member), inline: true },
+      { name: '🛡️ Signed By', value: moderatorIdentity(moderator), inline: true },
+      { name: '📝 Reason', value: reason || 'No reason provided' },
+      { name: '🎟️ Appeals', value: appeals }
+    ].concat(!accepted && restoredRoles.length ? [{ name: '♻️ Restored Roles', value: restoredRoles.map((roleId) => `<@&${roleId}>`).join(', ') }] : [])
   });
 }
 
@@ -378,6 +478,7 @@ async function reapplyRestrictionOnJoin(db, member) {
   const roleId = db.getConfig(member.guild.id, 'restricted_role');
   if (!roleId) return false;
   await member.roles.set([roleId], 'Active restriction reapplied after rejoin').catch(() => null);
+  await enforceRestrictedRoles(db, member, 'Active restriction role cleanup after rejoin').catch(() => null);
   await moderationLog(db, member.guild, 0, 'Restriction Reapplied', member.user, null, restriction.reason, [
     { name: 'Reason', value: 'Member left and joined back while restricted.' }
   ]);
@@ -415,6 +516,7 @@ module.exports = {
   unrestrictMember,
   deleteRecentMessagesFromUser,
   sendRestrictLog,
+  enforceRestrictedRoles,
   handleRestrictButton,
   handleRestrictModal,
   handleReviewButton,

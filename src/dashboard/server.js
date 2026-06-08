@@ -59,6 +59,7 @@ const CHANNEL_CONFIG_KEYS = new Set([
   'advanced_logs_channel',
   'restrict_logs_channel',
   'restricted_users_channel',
+  'restriction_appeals_channel',
   'roblox_updates_channel',
   'executor_updates_channel',
   'verification_channel',
@@ -68,7 +69,12 @@ const CHANNEL_CONFIG_KEYS = new Set([
   'welcome_channel',
   'achievement_channel',
   'level_announce_channel',
-  'member_count_voice'
+  'member_count_voice',
+  'staff_members_logs_channel',
+  'staff_application_review_channel',
+  'staff_duty_channel',
+  'internal_affairs_channel',
+  'incident_reports_channel'
 ]);
 
 const ROLE_CONFIG_KEYS = new Set([
@@ -78,10 +84,14 @@ const ROLE_CONFIG_KEYS = new Set([
   'bump_ping_role',
   'verified_role',
   'swat_guess_role',
-  'auto_role'
+  'auto_role',
+  'status_role',
+  'head_of_operations_role',
+  'staff_on_duty_role',
+  'staff_off_duty_role'
 ]);
 
-const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'moderator_roles', 'authorized_roles']);
+const ROLE_LIST_CONFIG_KEYS = new Set(['admin_roles', 'moderator_roles', 'moderation_command_roles', 'authorized_roles', 'staff_command_roles']);
 const CHANNEL_LIST_CONFIG_KEYS = new Set(['restriction_exempt_channels']);
 const CATEGORY_CONFIG_KEYS = new Set(['swat_case_category', 'swat_game_category', 'swat_guess_category']);
 const USER_LIST_CONFIG_KEYS = new Set(['admin_users', 'moderator_users']);
@@ -109,6 +119,7 @@ const CONFIG_LABELS = {
   advanced_logs_channel: 'Advanced logs channel',
   restrict_logs_channel: 'Restrict logs channel',
   restricted_users_channel: 'Restricted users channel',
+  restriction_appeals_channel: 'Restriction appeals channel',
   roblox_updates_channel: 'Roblox updates channel',
   executor_updates_channel: 'Executor updates channel',
   update_ping_role: 'Update ping role',
@@ -129,6 +140,8 @@ const CONFIG_LABELS = {
   swat_game_category: 'SWAT game category',
   swat_guess_category: 'SWAT guess category',
   auto_role: 'Auto role',
+  status_role: 'Discord status reward role',
+  status_role_text: 'Discord status trigger text',
   counting_channel: 'Counting channel',
   welcome_channel: 'Welcome channel',
   welcome_message: 'Welcome message',
@@ -137,11 +150,23 @@ const CONFIG_LABELS = {
   invite_count_role_rewards: 'Invite count role rewards',
   level_announce_channel: 'Level announcements channel',
   member_count_voice: 'Member count voice channel',
+  staff_command_roles: 'Command Staff roles',
+  head_of_operations_role: 'Head Of Operations role',
+  staff_members_logs_channel: 'Staff members logs channel',
+  staff_application_review_channel: 'Staff application review channel',
+  staff_duty_channel: 'Duty Status channel',
+  staff_on_duty_role: 'On Duty role',
+  staff_off_duty_role: 'Off Duty role',
+  internal_affairs_channel: 'Internal Affairs channel',
+  incident_reports_channel: 'Incident Reports channel',
+  staff_application_requirements: 'Staff application requirements',
+  staff_application_questions: 'Staff application questions',
   embed_style: 'Embed style',
   admin_users: 'Admin users',
   admin_roles: 'Admin roles',
   moderator_users: 'Moderator users',
-  moderator_roles: 'Moderator roles',
+  moderator_roles: 'Dashboard moderator roles',
+  moderation_command_roles: 'Moderation command roles',
   authorized_roles: 'Restrict review roles',
   ai_moderation_enabled: 'AI moderation enabled',
   anti_raid_enabled: 'Anti-raid enabled',
@@ -674,7 +699,7 @@ function configInputType(key) {
   if (NUMBER_CONFIG_KEYS.has(key)) return 'number';
   if (key === 'embed_style') return 'style';
   if (key === 'anti_raid_action') return 'action';
-  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards') return 'json';
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards' || key === 'staff_application_questions') return 'json';
   if (key === 'welcome_message') return 'message';
   return 'text';
 }
@@ -1816,15 +1841,17 @@ function normalizeConfigValue(key, value) {
     return ['restrict', 'kick', 'timeout', 'log'].includes(action) ? action : DEFAULT_GUILD_CONFIG.anti_raid_action;
   }
 
-  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards') {
+  if (key === 'sticky' || key === 'role_level_rewards' || key === 'invite_role_mappings' || key === 'invite_count_role_rewards' || key === 'staff_application_questions') {
     if (key === 'role_level_rewards' && !value) return [];
     if (key === 'invite_role_mappings' && !value) return [];
     if (key === 'invite_count_role_rewards' && !value) return [];
+    if (key === 'staff_application_questions' && !value) return DEFAULT_GUILD_CONFIG.staff_application_questions;
     if (!value) return null;
     if (typeof value === 'object') {
       if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(value);
       if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(value);
       if (key === 'role_level_rewards') return normalizeRoleLevelRewards(value);
+      if (key === 'staff_application_questions') return normalizeStaffQuestions(value);
       return value;
     }
     try {
@@ -1832,6 +1859,7 @@ function normalizeConfigValue(key, value) {
       if (key === 'invite_role_mappings') return inviteRoles.normalizeInviteRoleMappings(parsed);
       if (key === 'invite_count_role_rewards') return inviteRoles.normalizeInviteCountRoleRewards(parsed);
       if (key === 'role_level_rewards') return normalizeRoleLevelRewards(parsed);
+      if (key === 'staff_application_questions') return normalizeStaffQuestions(parsed);
       return parsed;
     } catch {
       throw httpError(400, `${CONFIG_LABELS[key] || key} must be valid JSON.`);
@@ -1950,6 +1978,11 @@ function displayConfigValue(client, guild, key, value) {
       .map((reward) => `${reward.invites} invites -> ${roleLabel(guild, reward.roleId)}`)
       .join(', ');
   }
+  if (key === 'staff_application_questions') {
+    return normalizeStaffQuestions(value)
+      .map((question, index) => `${index + 1}. ${question}`)
+      .join(', ');
+  }
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
@@ -1973,6 +2006,20 @@ function normalizeRoleLevelRewards(value) {
     byLevel.set(level, { level, roleId });
   }
   return [...byLevel.values()].sort((a, b) => a.level - b.level);
+}
+
+function normalizeStaffQuestions(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.values(value)
+      : [];
+  const questions = rows
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .map((item) => item.slice(0, 90));
+  return questions.length ? questions : DEFAULT_GUILD_CONFIG.staff_application_questions;
 }
 
 function channelLabel(guild, id) {

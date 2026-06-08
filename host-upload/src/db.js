@@ -9,6 +9,7 @@ const DEFAULT_GUILD_CONFIG = {
   advanced_logs_channel: null,
   restrict_logs_channel: null,
   restricted_users_channel: null,
+  restriction_appeals_channel: null,
   roblox_updates_channel: null,
   executor_updates_channel: null,
   update_ping_role: null,
@@ -20,7 +21,7 @@ const DEFAULT_GUILD_CONFIG = {
   bump_ping_role: null,
   bump_cooldown_minutes: 120,
   qna_channel: null,
-  qna_personality: 'Accurate, friendly, and concise. Answer only when you are confident, and ask for details when needed.',
+  qna_personality: 'Accurate, friendly, and concise. Act like a calm Discord support assistant. Answer only when you are confident, ask for details when needed, and keep the configured personality consistent.',
   swat_guess_role: null,
   swat_case_channel_name: '📺┃𝗦𝘄𝗮𝘁 𝗖𝗮𝘀𝗲',
   swat_game_channel_name: '📺┃𝗦𝘄𝗮𝘁 𝗚𝗮𝗺𝗲',
@@ -29,6 +30,8 @@ const DEFAULT_GUILD_CONFIG = {
   swat_game_category: null,
   swat_guess_category: null,
   auto_role: null,
+  status_role: null,
+  status_role_text: null,
   counting_channel: null,
   welcome_channel: null,
   welcome_message: 'Welcome {user} to {server}. You are member #{memberCount}.',
@@ -36,11 +39,29 @@ const DEFAULT_GUILD_CONFIG = {
   invite_role_mappings: [],
   invite_count_role_rewards: [],
   member_count_voice: null,
+  staff_command_roles: [],
+  head_of_operations_role: null,
+  staff_members_logs_channel: null,
+  staff_application_review_channel: null,
+  staff_duty_channel: null,
+  staff_on_duty_role: null,
+  staff_off_duty_role: null,
+  internal_affairs_channel: null,
+  incident_reports_channel: null,
+  staff_application_requirements: 'Minimum age: 16+\nClean moderation history\nProfessional attitude\nAble to follow the Chain of Command\nMust understand SWAT server rules and procedures',
+  staff_application_questions: [
+    'Why do you want to join Operations Command?',
+    'What timezone are you in and when are you active?',
+    'What moderation or leadership experience do you have?',
+    'How would you handle a heated ticket or report?',
+    'Why should Command Staff trust you with staff access?'
+  ],
   embed_style: 'sapphire',
   admin_users: [],
   admin_roles: [],
   moderator_users: [],
   moderator_roles: [],
+  moderation_command_roles: [],
   authorized_roles: [],
   ai_moderation_enabled: true,
   anti_raid_enabled: true,
@@ -58,6 +79,10 @@ const DEFAULT_GUILD_CONFIG = {
   sticky: null
 };
 
+const LEGACY_GUILD_CONFIG_MIGRATIONS = {
+  staff_logs_channel: 'staff_members_logs_channel'
+};
+
 function now() {
   return Date.now();
 }
@@ -73,6 +98,14 @@ function decode(value, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function hasConfigValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
 }
 
 function quoteIdentifier(value) {
@@ -416,6 +449,177 @@ class BotDatabase {
         earned_at INTEGER NOT NULL,
         PRIMARY KEY (guild_id, user_id, key)
       );
+
+      CREATE TABLE IF NOT EXISTS staff_applications (
+        guild_id TEXT NOT NULL,
+        application_id INTEGER NOT NULL,
+        applicant_id TEXT NOT NULL,
+        answers TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewer_id TEXT,
+        reviewer_notes TEXT,
+        submitted_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, application_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_staff_applications_status
+        ON staff_applications (guild_id, status, submitted_at);
+
+      CREATE TABLE IF NOT EXISTS staff_profiles (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        rank_key TEXT NOT NULL DEFAULT 'probationary_officer',
+        tickets_handled INTEGER NOT NULL DEFAULT 0,
+        reports_handled INTEGER NOT NULL DEFAULT 0,
+        warnings_issued INTEGER NOT NULL DEFAULT 0,
+        timeouts_issued INTEGER NOT NULL DEFAULT 0,
+        events_hosted INTEGER NOT NULL DEFAULT 0,
+        cases_handled INTEGER NOT NULL DEFAULT 0,
+        duty_time_ms INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_rank_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        old_rank_key TEXT,
+        new_rank_key TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_staff_rank_history_user
+        ON staff_rank_history (guild_id, user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS staff_duty_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        duration_ms INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_staff_duty_sessions_user
+        ON staff_duty_sessions (guild_id, user_id, started_at);
+
+      CREATE TABLE IF NOT EXISTS staff_loa_requests (
+        guild_id TEXT NOT NULL,
+        loa_id INTEGER NOT NULL,
+        user_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending',
+        reason TEXT NOT NULL,
+        duration_ms INTEGER,
+        start_at INTEGER NOT NULL,
+        end_at INTEGER,
+        reviewer_id TEXT,
+        review_notes TEXT,
+        created_at INTEGER NOT NULL,
+        reviewed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, loa_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_staff_loa_requests_user
+        ON staff_loa_requests (guild_id, user_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS staff_mod_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        staff_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason TEXT,
+        note TEXT,
+        duration_ms INTEGER,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_staff_mod_history_user
+        ON staff_mod_history (guild_id, user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS staff_ia_cases (
+        guild_id TEXT NOT NULL,
+        ia_id INTEGER NOT NULL,
+        reporter_id TEXT NOT NULL,
+        staff_id TEXT NOT NULL,
+        investigator_id TEXT,
+        status TEXT NOT NULL DEFAULT 'Open',
+        summary TEXT NOT NULL,
+        evidence TEXT,
+        notes TEXT,
+        outcome TEXT,
+        created_at INTEGER NOT NULL,
+        closed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, ia_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_cases (
+        guild_id TEXT NOT NULL,
+        staff_case_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        target_id TEXT,
+        assigned_to TEXT,
+        priority TEXT NOT NULL DEFAULT 'Medium',
+        status TEXT NOT NULL DEFAULT 'Open',
+        notes TEXT,
+        outcome TEXT,
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        closed_by TEXT,
+        closed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, staff_case_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_incidents (
+        guild_id TEXT NOT NULL,
+        incident_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        involved_users TEXT NOT NULL DEFAULT '[]',
+        evidence TEXT NOT NULL DEFAULT '[]',
+        outcome TEXT,
+        status TEXT NOT NULL DEFAULT 'Open',
+        created_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        closed_by TEXT,
+        closed_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, incident_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_awards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        award_key TEXT NOT NULL,
+        award_label TEXT NOT NULL,
+        awarded_by TEXT NOT NULL,
+        reason TEXT,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_action_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        actor_id TEXT,
+        action TEXT NOT NULL,
+        target_id TEXT,
+        reference_type TEXT,
+        reference_id TEXT,
+        details TEXT,
+        created_at INTEGER NOT NULL
+      );
     `);
     this.ensureColumn('ticket_panels', 'mode', "TEXT NOT NULL DEFAULT 'thread'");
     this.ensureColumn('ticket_panels', 'panel_content', 'TEXT');
@@ -482,6 +686,28 @@ class BotDatabase {
       if (!existing) {
         this.setConfig(guildId, key, value);
       }
+    }
+    this.migrateLegacyGuildConfig(guildId);
+  }
+
+  migrateLegacyGuildConfig(guildId) {
+    for (const [legacyKey, targetKey] of Object.entries(LEGACY_GUILD_CONFIG_MIGRATIONS)) {
+      const legacy = this.db
+        .prepare('SELECT value FROM guild_config WHERE guild_id = ? AND key = ?')
+        .get(guildId, legacyKey);
+      if (!legacy) continue;
+
+      const target = this.db
+        .prepare('SELECT value FROM guild_config WHERE guild_id = ? AND key = ?')
+        .get(guildId, targetKey);
+      const legacyValue = decode(legacy.value);
+      const targetValue = target ? decode(target.value) : null;
+
+      if (hasConfigValue(legacyValue) && !hasConfigValue(targetValue)) {
+        this.setConfig(guildId, targetKey, legacyValue);
+      }
+
+      this.deleteConfig(guildId, legacyKey);
     }
   }
 

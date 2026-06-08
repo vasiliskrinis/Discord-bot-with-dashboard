@@ -133,6 +133,8 @@ const RANDOM_SWAT_THEMES = [
   'a rescue call in storm drains where the victim left clues in emergency code'
 ];
 
+const NON_ENGLISH_SCRIPT_RE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af\u0400-\u04ff]/u;
+
 function stateKey(name) {
   return `swat:${name}`;
 }
@@ -431,6 +433,7 @@ async function generateScenario(kind, theme, moderatorTag) {
   const fallback = fallbackScenario(kind, resolvedTheme);
   const prompt = [
     'Create one original SWAT roleplay investigation as JSON only.',
+    'Write every JSON value in English only using Latin-script text. Never use Chinese, Japanese, Korean, Cyrillic, or any other non-English script.',
     'Only use realistic SWAT, tactical police, investigation, hostage, rescue, raid, dispatch, evidence, or pursuit ideas.',
     'Do not use fantasy, superheroes, sci-fi, school tests, generic party games, or non-SWAT plots.',
     'No multiple choice options. Players solve by writing theories in the channel.',
@@ -444,8 +447,8 @@ async function generateScenario(kind, theme, moderatorTag) {
   ].join('\n');
 
   const answer = await ai.askAI(prompt, {
-    personality: 'You are a serious SWAT roleplay game master who writes fresh Discord investigations.',
-    behavior: 'Return compact valid JSON only. Make each scenario different, cinematic, and solvable.',
+    personality: 'You are a serious English-language SWAT roleplay game master who writes fresh Discord investigations.',
+    behavior: 'Return compact valid JSON only. Make each scenario different, cinematic, solvable, and entirely English.',
     maxTokens: 900,
     temperature: 0.95
   }).catch(() => null);
@@ -459,16 +462,16 @@ function normalizeScenario(data, fallback) {
   const persons = Array.isArray(data.persons) ? data.persons : fallback.persons;
   const aliases = Array.isArray(data.aliases) ? data.aliases : fallback.aliases;
   return {
-    title: cleanText(data.title, fallback.title, 120),
-    incident: cleanText(data.incident, fallback.incident, 700),
-    briefing: cleanText(data.briefing, fallback.briefing, 900),
-    scene: cleanText(data.scene, fallback.scene, 900),
-    evidence: evidence.map((item) => cleanText(item, '', 220)).filter(Boolean).slice(0, 6),
-    persons: persons.map((item) => cleanText(item, '', 220)).filter(Boolean).slice(0, 6),
-    objective: cleanText(data.objective, fallback.objective, 260),
-    solution: cleanText(data.solution, fallback.solution, 220),
-    aliases: [data.solution, ...aliases, ...fallback.aliases].map((item) => cleanText(item, '', 120)).filter(Boolean).slice(0, 10),
-    hint: cleanText(data.hint, fallback.hint, 260)
+    title: cleanEnglishText(data.title, fallback.title, 120),
+    incident: cleanEnglishText(data.incident, fallback.incident, 700),
+    briefing: cleanEnglishText(data.briefing, fallback.briefing, 900),
+    scene: cleanEnglishText(data.scene, fallback.scene, 900),
+    evidence: englishList(evidence, fallback.evidence, 220, 6),
+    persons: englishList(persons, fallback.persons, 220, 6),
+    objective: cleanEnglishText(data.objective, fallback.objective, 260),
+    solution: cleanEnglishText(data.solution, fallback.solution, 220),
+    aliases: englishList([data.solution, ...aliases, ...fallback.aliases], fallback.aliases, 120, 10),
+    hint: cleanEnglishText(data.hint, fallback.hint, 260)
   };
 }
 
@@ -594,6 +597,7 @@ async function judgeRoleplayMessage(record, message) {
   const prompt = [
     'You are judging a SWAT Discord roleplay answer.',
     'Return JSON only: {"solved":true/false,"reason":"short reason"}.',
+    'The reason must be English only.',
     'Mark solved only if the member clearly identifies the winning theory, culprit, tactic, or decisive evidence.',
     `Scenario title: ${record.title}`,
     `Objective: ${record.objective}`,
@@ -602,15 +606,15 @@ async function judgeRoleplayMessage(record, message) {
     `Member message: ${content.slice(0, 900)}`
   ].join('\n');
   const answer = await ai.askAI(prompt, {
-    personality: 'You are a strict but fair SWAT game judge.',
-    behavior: 'Return valid JSON only.',
+    personality: 'You are a strict but fair English-language SWAT game judge.',
+    behavior: 'Return valid JSON only with English text only.',
     maxTokens: 120,
     temperature: 0.1
   }).catch(() => null);
   const parsed = parseJsonObject(answer);
   return {
     solved: Boolean(parsed?.solved),
-    reason: cleanText(parsed?.reason, 'AI judged the answer correct.', 180)
+    reason: cleanEnglishText(parsed?.reason, 'AI judged the answer correct.', 180)
   };
 }
 
@@ -735,6 +739,7 @@ async function judgeGuessMessage(game, episode, message) {
   const prompt = [
     'You are judging a SWAT Discord episode guessing answer.',
     'Return JSON only: {"solved":true/false,"reason":"short reason"}.',
+    'The reason must be English only.',
     'Mark solved only if the member is clearly answering with this exact episode title or season/episode.',
     'Ignore casual discussion, character names, and partial guesses that are not enough to identify the episode.',
     `Clue type: ${game.type}`,
@@ -744,15 +749,15 @@ async function judgeGuessMessage(game, episode, message) {
     `Member message: ${content.slice(0, 500)}`
   ].join('\n');
   const answer = await ai.askAI(prompt, {
-    personality: 'You are a strict but fair SWAT episode game judge.',
-    behavior: 'Return valid JSON only.',
+    personality: 'You are a strict but fair English-language SWAT episode game judge.',
+    behavior: 'Return valid JSON only with English text only.',
     maxTokens: 100,
     temperature: 0.1
   }).catch(() => null);
   const parsed = parseJsonObject(answer);
   return {
     solved: Boolean(parsed?.solved),
-    reason: cleanText(parsed?.reason, 'AI judged the episode answer correct.', 180)
+    reason: cleanEnglishText(parsed?.reason, 'AI judged the episode answer correct.', 180)
   };
 }
 
@@ -828,12 +833,13 @@ async function decideSeasonAwards(rows, events) {
   }));
   const answer = await ai.askAI([
     'Assign SWAT season awards as JSON only.',
+    'Write every award title and reason in English only using Latin-script text.',
     'Use each member stats to decide who gets what award. Make award names tactical and different.',
     'Return {"awards":[{"userId":"","title":"","reason":""}]}',
     JSON.stringify(payload)
   ].join('\n'), {
-    personality: 'You are a SWAT season awards commissioner.',
-    behavior: 'Return compact valid JSON only.',
+    personality: 'You are an English-language SWAT season awards commissioner.',
+    behavior: 'Return compact valid JSON only with English text only.',
     maxTokens: 500,
     temperature: 0.75
   }).catch(() => null);
@@ -846,8 +852,8 @@ async function decideSeasonAwards(rows, events) {
       return {
         userId: row[0],
         points: row[1],
-        title: cleanText(award.title, 'Season Operator', 80),
-        reason: cleanText(award.reason, 'Strong season performance.', 220)
+        title: cleanEnglishText(award.title, 'Season Operator', 80),
+        reason: cleanEnglishText(award.reason, 'Strong season performance.', 220)
       };
     })
     .filter(Boolean);
@@ -1028,6 +1034,27 @@ function parseJsonObject(text) {
 function cleanText(value, fallback, maxLength) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   return (text || fallback || '').slice(0, maxLength);
+}
+
+function cleanEnglishText(value, fallback, maxLength) {
+  const text = cleanText(value, '', maxLength)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, '-');
+  if (!text || NON_ENGLISH_SCRIPT_RE.test(text)) return cleanText(fallback, '', maxLength);
+  return text;
+}
+
+function englishList(values, fallbackValues, maxLength, limit) {
+  const cleaned = (Array.isArray(values) ? values : [])
+    .map((item) => cleanEnglishText(item, '', maxLength))
+    .filter(Boolean)
+    .slice(0, limit);
+  if (cleaned.length) return cleaned;
+  return (Array.isArray(fallbackValues) ? fallbackValues : [])
+    .map((item) => cleanText(item, '', maxLength))
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function fieldValue(value) {

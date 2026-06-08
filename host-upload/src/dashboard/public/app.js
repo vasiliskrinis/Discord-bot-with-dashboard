@@ -6,6 +6,7 @@ const state = {
   selectedGuildId: null,
   guildDetail: null,
   view: 'overview',
+  serverSection: 'settings',
   selectedCommandCategory: 'all',
   picker: null,
   refreshTimer: null,
@@ -39,6 +40,9 @@ function bindElements() {
     refreshButton: document.getElementById('refreshButton'),
     errorBanner: document.getElementById('errorBanner'),
     summaryLine: document.getElementById('summaryLine'),
+    opsDeckTitle: document.getElementById('opsDeckTitle'),
+    opsDeckMeta: document.getElementById('opsDeckMeta'),
+    insightStrip: document.getElementById('insightStrip'),
     statGrid: document.getElementById('statGrid'),
     runtimeStamp: document.getElementById('runtimeStamp'),
     runtimeControls: document.getElementById('runtimeControls'),
@@ -232,6 +236,20 @@ function bindEvents() {
 
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => setView(button.dataset.view));
+  });
+
+  document.querySelectorAll('[data-quick-view]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const view = button.dataset.quickView;
+      if (['server', 'tickets'].includes(view) && state.selectedGuildId && !state.guildDetail) {
+        await loadGuild(state.selectedGuildId).catch((err) => showToast(err.message || 'Server data failed to load.'));
+      }
+      setView(view);
+    });
+  });
+
+  document.querySelectorAll('[data-server-section]').forEach((button) => {
+    button.addEventListener('click', () => setServerSection(button.dataset.serverSection));
   });
 
   els.commandCategoryList.addEventListener('click', (event) => {
@@ -694,6 +712,7 @@ function renderOverview(overview) {
   renderErrors(overview.errors || []);
   renderBot(overview.bot);
   renderGuildList();
+  renderOpsDeck(overview);
   renderStats(overview);
   renderRuntimeControls(overview.runtime);
   renderPresenceForm(overview.bot);
@@ -706,6 +725,35 @@ function renderOverview(overview) {
 
   els.summaryLine.textContent = `${formatNumber(overview.totals.guilds)} servers - ${formatNumber(overview.totals.members)} members - ${statusLabel(overview.bot.status)} - ${formatDuration(overview.bot.uptimeMs)} uptime`;
   els.runtimeStamp.textContent = formatDate(overview.generatedAt);
+}
+
+function renderOpsDeck(overview) {
+  const bot = overview.bot || {};
+  const guilds = overview.guilds || [];
+  const selectedGuild = guilds.find((guild) => guild.id === state.selectedGuildId) || guilds[0] || null;
+  const readyGuilds = guilds.filter((guild) => !guild.missingCritical?.length).length;
+  const missingTotal = guilds.reduce((sum, guild) => sum + (guild.missingCritical?.length || 0), 0);
+  const runtime = overview.runtime || {};
+  const activeLocks = Object.entries(runtime).filter(([, enabled]) => Boolean(enabled)).map(([key]) => runtimeFlagLabel(key));
+  const gatewayTone = bot.status === 'online' ? 'is-good' : bot.status === 'idle' ? 'is-warn' : 'is-danger';
+  const setupTone = missingTotal === 0 ? 'is-good' : missingTotal > 4 ? 'is-danger' : 'is-warn';
+  const runtimeTone = activeLocks.length ? 'is-warn' : 'is-good';
+  const selectedTone = selectedGuild?.missingCritical?.length ? 'is-warn' : 'is-good';
+
+  els.opsDeckTitle.textContent = bot.tag || 'Discord Bot';
+  els.opsDeckMeta.textContent = `${formatNumber(overview.totals.guilds)} servers - ${formatNumber(overview.totals.members)} members - refreshed ${formatDate(overview.generatedAt)}`;
+  els.insightStrip.innerHTML = [
+    ['Gateway', statusLabel(bot.status), bot.ping === null ? 'Ping unavailable' : `${bot.ping} ms ping`, gatewayTone],
+    ['Selected Server', selectedGuild ? selectedGuild.name : 'None', selectedGuild ? `${formatNumber(selectedGuild.memberCount)} members` : 'No server connected', selectedTone],
+    ['Setup', `${readyGuilds}/${guilds.length || 0} ready`, missingTotal ? `${formatNumber(missingTotal)} critical gaps` : 'Critical settings ready', setupTone],
+    ['Runtime', activeLocks.length ? `${activeLocks.length} active` : 'Clear', activeLocks.length ? activeLocks.join(', ') : 'No runtime locks', runtimeTone]
+  ].map(([label, value, detail, tone]) => `
+    <article class="insight-card ${tone}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </article>
+  `).join('');
 }
 
 function renderBot(bot) {
@@ -850,6 +898,7 @@ function renderCommandCatalog(commands) {
 function commandSections(commands) {
   const groups = [
     ['setup', 'Setup', 'Configuration, verification, server setup.', new Set(['setup', 'verification', 'channel-restriction', 'mass-sync-categories', 'qna', 'swat-name'])],
+    ['staff', 'SWAT Staff', 'Applications, duty status, IA, case files, ranks, and awards.', new Set(['staff', 'duty', 'promote', 'demote', 'rank', 'history', 'ia', 'incident'])],
     ['tickets', 'Tickets', 'Panel creation and support flow tools.', new Set(['ticket-panel'])],
     ['moderation', 'Moderation', 'Restriction, cases, warnings, bans.', new Set(['restrict', 'unrestrict', 'ban', 'unban', 'kick', 'mute', 'unmute', 'warn', 'unwarn', 'warnings', 'softban', 'mass-ban', 'case', 'ban-list', 'note'])],
     ['channels', 'Channels & Roles', 'Permissions, cleanup, roles, voice tools.', new Set(['lock', 'unlock', 'lockdown', 'unlockdown', 'purge', 'slowmode', 'give-role', 'remove-role', 'voice-mute', 'lock-user', 'unlock-user', 'temp-role', 'temp-role-remove', 'temp-role-list', 'move', 'set-nick'])],
@@ -895,11 +944,19 @@ function renderGuildList() {
     const health = guild.missingCritical.length === 0 ? 'Ready' : `${guild.missingCritical.length} missing`;
     const pillClass = guild.missingCritical.length === 0 ? '' : guild.missingCritical.length > 2 ? ' danger' : ' warn';
     const active = guild.id === state.selectedGuildId ? ' is-active' : '';
+    const guildIcon = guild.iconUrl
+      ? `<img src="${escapeAttribute(guild.iconUrl)}" alt="">`
+      : `<span>${escapeHtml(initials(guild.name))}</span>`;
     return `
       <button class="guild-item${active}" type="button" data-guild-id="${escapeAttribute(guild.id)}">
-        <strong>${escapeHtml(guild.name)}</strong>
+        <span class="guild-identity">
+          <span class="guild-icon">${guildIcon}</span>
+          <span class="guild-copy">
+            <strong>${escapeHtml(guild.name)}</strong>
+            <small>${formatNumber(guild.memberCount)} members</small>
+          </span>
+        </span>
         <span class="pill${pillClass}">${escapeHtml(health)}</span>
-        <small>${formatNumber(guild.memberCount)} members</small>
       </button>
     `;
   }).join('') || '<div class="empty-state">No servers found.</div>';
@@ -3073,6 +3130,20 @@ function setView(view) {
   if (view === 'commands') {
     renderCommandCatalog(state.overview?.commandCatalog || []);
   }
+  if (view === 'server') {
+    setServerSection(state.serverSection || 'settings');
+  }
+}
+
+function setServerSection(section) {
+  const next = ['settings', 'embed', 'controls', 'reactions', 'activity'].includes(section) ? section : 'settings';
+  state.serverSection = next;
+  document.querySelectorAll('[data-server-section]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.serverSection === next);
+  });
+  document.querySelectorAll('[data-server-section-panel]').forEach((panel) => {
+    panel.classList.toggle('is-hidden', panel.dataset.serverSectionPanel !== next);
+  });
 }
 
 function showLogin() {
@@ -3091,6 +3162,9 @@ function renderDashboardError(err) {
   const message = err.message || 'Dashboard data failed to load.';
   renderErrors([{ section: 'Dashboard', message }]);
   els.summaryLine.textContent = 'Dashboard data failed to load';
+  els.opsDeckTitle.textContent = 'Dashboard unavailable';
+  els.opsDeckMeta.textContent = message;
+  els.insightStrip.innerHTML = `<div class="empty-state full-width">${escapeHtml(message)}</div>`;
   els.statGrid.innerHTML = `<div class="empty-state full-width">${escapeHtml(message)}</div>`;
   els.runtimeStamp.textContent = '';
   els.runtimeControls.innerHTML = '<div class="empty-state full-width">Runtime data unavailable.</div>';
@@ -3216,6 +3290,22 @@ function statusLabel(status) {
     unknown: 'Unknown'
   };
   return labels[status] || status || 'Unknown';
+}
+
+function titleizeCamel(value) {
+  return String(value || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (char) => char.toUpperCase());
+}
+
+function runtimeFlagLabel(key) {
+  const labels = {
+    maintenance: 'Maintenance',
+    panicMode: 'Panic Mode',
+    botLocked: 'Bot Locked',
+    aiLocked: 'AI Locked'
+  };
+  return labels[key] || titleizeCamel(key);
 }
 
 function initials(text) {

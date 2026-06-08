@@ -193,6 +193,7 @@ async function handleReaction(db, reaction, user, action) {
   const role = guild.roles.cache.get(option.roleId);
   if (!member || !role) return false;
   if (action === 'add') {
+    if (db.getActiveRestriction(guild.id, user.id)) return true;
     await member.roles.add(role, `Reaction role ${panel.panelId}`).catch(() => null);
     return true;
   }
